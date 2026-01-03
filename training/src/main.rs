@@ -203,7 +203,7 @@ async fn main() {
 
     let batch_size = 128;
     let learning_rate = 1e-4;
-    let num_epochs = 30;
+    let num_epochs = 100;
 
     let config = BattleModelConfig {
         d_model: 128, // 512 -> 256 (Big reduction)
