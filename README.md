@@ -1,4 +1,4 @@
-# metal_wyvern
+# Metal Hydra
 
 -   [x] Step 1 - Keep as is, but in Rust. Serve the same ONNX model on an axum server.
 
