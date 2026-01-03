@@ -201,8 +201,8 @@ type MyAutodiffBackend = Autodiff<MyBackend>;
 async fn main() {
     let device = CudaDevice::default();
 
-    let batch_size = 128;
-    let learning_rate = 1e-4;
+    let batch_size = 256;
+    let learning_rate = 3e-4;
     let num_epochs = 100;
 
     let config = BattleModelConfig {
