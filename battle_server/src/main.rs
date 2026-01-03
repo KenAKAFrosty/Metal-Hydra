@@ -6,7 +6,7 @@ use axum::{
 use ndarray::{Array2, Array3, Array4};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use burn::module::Module;
+use burn::{module::Module, record::{FullPrecisionSettings, NamedMpkFileRecorder}};
 use burn::{record::CompactRecorder, record::Recorder, tensor::{Tensor, TensorData}};
 use burn_ndarray::NdArray;
 
@@ -413,23 +413,23 @@ async fn main() -> anyhow::Result<()> {
             let m = ModelOriginal::from_file("simple_cnn_opset16", &device);
             (Model::Original(m), ModelKind::Cnn)
         },
-        "transformer_v2" => {
+        "transformer_scout" => {
              // MUST MATCH TRAINING CONFIG!
             let config = BattleModelConfig {
-                d_model: 512, // Embedding size
-                d_ff: 2048,   // Feed forward inner dimension
-                n_heads: 8,   // Attention heads. rule of thumb is d_model / 64 = n_heads
-                n_layers: 10,
+                d_model: 128,
+                d_ff: 512,
+                n_heads: 4,
+                n_layers: 6,
                 num_classes: 4,
-                tile_features: 26, // Match Batcher
-                meta_features: 2,  // Match Batcher
+                tile_features: 26,
+                meta_features: 2,
                 grid_size: 11,
             };
 
              
              // Load the record explicitly
-             let record = CompactRecorder::new()
-                .load("transformer_optimized".into(), &device)
+             let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
+                .load("model-4".into(), &device)
                 .expect("Failed to load transformer weights");
              
              // Init and load
