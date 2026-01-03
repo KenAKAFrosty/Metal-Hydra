@@ -1,0 +1,19 @@
+[package]
+name = "battle_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+
+ndarray = "0.15"                                    # Burn uses 0.15 internally usually, check compatibility
+burn = { workspace = true, features = ["ndarray"] }
+burn-ndarray = "0.19"
+
+burn_ai_model = { path = "../burn_ai_model" }
+dotenvy = "0.15.7"
