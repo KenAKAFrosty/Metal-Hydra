@@ -6,10 +6,15 @@ use burn::data::dataloader::DataLoaderBuilder;
 use burn::data::dataset::Dataset;
 use burn::optim::AdamWConfig;
 use burn::prelude::*;
-use burn::record::{CompactRecorder, Recorder};
+use burn::record::{CompactRecorder, FullPrecisionSettings, NamedMpkFileRecorder, Recorder};
 use burn::tensor::backend::AutodiffBackend;
+use burn::train::checkpoint::{FileCheckpointer, MetricCheckpointingStrategy};
+use burn::train::metric::store::{Aggregate, Direction, Split};
 use burn::train::metric::{AccuracyMetric, LossMetric};
-use burn::train::{ClassificationOutput, LearnerBuilder, TrainOutput, TrainStep, ValidStep};
+use burn::train::{
+    ClassificationOutput, LearnerBuilder, MetricEarlyStoppingStrategy, TrainOutput, TrainStep,
+    ValidStep,
+};
 use bytemuck::{cast_slice, pod_read_unaligned};
 use memmap2::Mmap;
 use std::fs::File;
@@ -189,31 +194,42 @@ impl<B: Backend> ValidStep<BattlesnakeBatch<B>, ClassificationOutput<B>> for Bat
 
 // --- MAIN ---
 
-type MyBackend = Cuda<burn::tensor::f16>;
+type MyBackend = Cuda;
 type MyAutodiffBackend = Autodiff<MyBackend>;
 
 #[tokio::main]
 async fn main() {
     let device = CudaDevice::default();
 
-    // Hyperparams
     let batch_size = 128;
-    let learning_rate = 6e-5;
-    let num_epochs = 100;
+    let learning_rate = 1e-4;
+    let num_epochs = 30;
 
     let config = BattleModelConfig {
-        d_model: 512,
-        d_ff: 2048,
-        n_heads: 8,
-        n_layers: 10,
+        d_model: 128, // 512 -> 256 (Big reduction)
+        d_ff: 512,    // 2048 -> 1024
+        n_heads: 4,
+        n_layers: 6, // 10 -> 6
         num_classes: 4,
         tile_features: 26,
         meta_features: 2,
         grid_size: 11,
     };
 
+    let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
+
     let model: BattleModel<MyAutodiffBackend> = BattleModel::new(&config, &device);
-    let optimizer = AdamWConfig::new().with_cautious_weight_decay(true).init();
+
+    println!("Num params in model: {}", model.num_params());
+
+    // let model = model
+    //     .load_file("../transformer_optimized", &CompactRecorder::new(), &device)
+    //     .expect("Could not load model weights! Check path and config compatibility.");
+
+    let optimizer = AdamWConfig::new()
+        .with_weight_decay(1e-2)
+        .with_cautious_weight_decay(true)
+        .init();
 
     // --- LOAD DATASET (BINARY) ---
     // Make sure preprocess has run and generated this file!
@@ -238,15 +254,20 @@ async fn main() {
         .num_workers(2)
         .build(dataset_valid);
 
-    let artifact_dir = "/tmp/battlesnake-transformer";
+    let artifact_dir = "/tmp/battlesnake-transformer-scout";
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(AccuracyMetric::new())
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(AccuracyMetric::new())
         .metric_valid_numeric(LossMetric::new())
-        .with_file_checkpointer(CompactRecorder::new())
-        // .devices(vec![device.clone()])
+        .with_checkpointing_strategy(MetricCheckpointingStrategy::new(
+            &AccuracyMetric::<MyBackend>::new(),
+            Aggregate::Mean,
+            Direction::Highest,
+            Split::Valid,
+        ))
+        .with_file_checkpointer(recorder.clone())
         .num_epochs(num_epochs)
         .build(model, optimizer, learning_rate);
 
@@ -254,7 +275,7 @@ async fn main() {
 
     model_trained
         .model
-        .save_file("transformer_optimized", &CompactRecorder::new())
+        .save_file("transformer_scout", &recorder)
         .expect("Failed to save model");
 
     println!("Training complete.");

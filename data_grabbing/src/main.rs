@@ -232,8 +232,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("--- Step 1a: Scraping Standard Leaderboard ---");
     scrape_leaderboard_ids(GameMode::Standard).await?;
 
-    println!("--- Step 1b: Scraping Duel Leaderboard ---");
-    scrape_leaderboard_ids(GameMode::Duel).await?;
+    // println!("--- Step 1b: Scraping Duel Leaderboard ---");
+    // scrape_leaderboard_ids(GameMode::Duel).await?;
 
     // 3. Step B: Process Pending Games
     println!("--- Step 2: Processing Pending Games ---");
