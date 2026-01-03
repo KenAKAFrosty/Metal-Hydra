@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "battle_server",
-    "playground",
     "data_grabbing",
     "burn_ai_model",
     "training",

@@ -11,9 +11,6 @@ use burn::{record::CompactRecorder, record::Recorder, tensor::{Tensor, TensorDat
 use burn_ndarray::NdArray;
 
 use burn_ai_model::simple_cnn_opset16::Model as ModelOriginal;
-use burn_ai_model::cnn_v2::ModelNoPool;
-use burn_ai_model::cnn_v3_the_beefening::ModelBeefierCnn;
-use burn_ai_model::cnn_v4_beef_to_the_future::ModelBeefierCnn as ModelBeefBeef;
 use burn_ai_model::transformer::{BattleModel, BattleModelConfig}; 
 
 // DEFINE THE BACKEND
@@ -39,18 +36,12 @@ struct AppState {
 
 enum Model { 
     Original(ModelOriginal<B>),
-    NoPool(ModelNoPool<B>),
-    Beef(ModelBeefierCnn<B>),
-    BeefBeef(ModelBeefBeef<B>),
     Transformer(BattleModel<B>)
 }
 impl Model {
     pub fn color(&self) -> &'static str {
         match self {
-            Model::NoPool(_) => "#516D34",
             Model::Original(_) => "#D34516",
-            Model::Beef(_) => "#8e16d3",
-            Model::BeefBeef(_) => "#d3c616",
             Model::Transformer(_) => "#0000FF",
         }
     }
@@ -387,18 +378,6 @@ async fn handle_move(
             
             // CNN CASES
             (Model::Original(m), PreprocessedData::Cnn { board, meta }) => {
-                let (b, m_tens) = to_tensors(board, meta, &device);
-                m.forward(b, m_tens)
-            },
-            (Model::NoPool(m), PreprocessedData::Cnn { board, meta }) => {
-                let (b, m_tens) = to_tensors(board, meta, &device);
-                m.forward(b, m_tens)
-            },
-            (Model::Beef(m), PreprocessedData::Cnn { board, meta }) => {
-                let (b, m_tens) = to_tensors(board, meta, &device);
-                m.forward(b, m_tens)
-            },
-            (Model::BeefBeef(m), PreprocessedData::Cnn { board, meta }) => {
                 let (b, m_tens) = to_tensors(board, meta, &device);
                 m.forward(b, m_tens)
             },
