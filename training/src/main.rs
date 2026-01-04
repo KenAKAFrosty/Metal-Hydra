@@ -27,7 +27,7 @@ use burn_ai_model::transformer::{BattleModel, BattleModelConfig};
 
 const GRID_SIZE: usize = 11;
 const SEQ_LEN: usize = GRID_SIZE * GRID_SIZE;
-const TILE_FEATS: usize = 26;
+const TILE_FEATS: usize = 27;
 const META_FEATS: usize = 2;
 // (121 * 26) + 2 + 1 = 3149
 const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 1;
@@ -201,19 +201,22 @@ type MyAutodiffBackend = Autodiff<MyBackend>;
 async fn main() {
     let device = CudaDevice::default();
 
-    let batch_size = 512;
-    let learning_rate = 5e-4;
+    let batch_size = 1024;
+    let learning_rate = 6e-4;
     let num_epochs = 100;
 
     let config = BattleModelConfig {
-        d_model: 128, // 512 -> 256 (Big reduction)
-        d_ff: 512,    // 2048 -> 1024
-        n_heads: 4,
-        n_layers: 6, // 10 -> 6
+        d_model: 64,
+        d_ff: 256,
+        n_heads: 2,
+        n_layers: 4,
         num_classes: 4,
-        tile_features: 26,
+        tile_features: 27,
         meta_features: 2,
         grid_size: 11,
+        dropout: 0.1,
+        head_hidden_size: 128,
+        num_queries: 8,
     };
 
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
@@ -254,7 +257,7 @@ async fn main() {
         .num_workers(2)
         .build(dataset_valid);
 
-    let artifact_dir = "/tmp/battlesnake-transformer-scout";
+    let artifact_dir = "/tmp/battlesnake-transformer-drone";
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(AccuracyMetric::new())
@@ -275,7 +278,7 @@ async fn main() {
 
     model_trained
         .model
-        .save_file("transformer_scout", &recorder)
+        .save_file("transformer_drone", &recorder)
         .expect("Failed to save model");
 
     println!("Training complete.");

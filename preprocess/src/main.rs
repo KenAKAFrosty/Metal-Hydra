@@ -65,10 +65,10 @@ struct TrainingExample {
 // --- CONSTANTS ---
 const GRID_SIZE: usize = 11;
 const SEQ_LEN: usize = GRID_SIZE * GRID_SIZE;
-const TILE_FEATS: usize = 26;
+const TILE_FEATS: usize = 27;
 const META_FEATS: usize = 2;
 
-// Total floats per example: (121 * 26) + 2 + 1 (label)
+// Total floats per example: (121 * 27) + 2 + 1 (label)
 const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 1;
 
 fn main() {
@@ -110,18 +110,25 @@ fn main() {
         // Zero out the buffer for the new game state
         buffer.fill(0.0);
 
+        let mut occupied = [false; SEQ_LEN];
+
         let w = item.game.width as usize;
         let h = item.game.height as usize;
         let area = (w * h) as f32;
 
         // --- CLOSURE: Write a specific feature to the flat buffer ---
-        let mut write_feature = |x: i32, y: i32, feat_offset: usize, val: f32, buf: &mut [f32]| {
-            if x >= 0 && x < GRID_SIZE as i32 && y >= 0 && y < GRID_SIZE as i32 {
-                let tile_idx = (y as usize * GRID_SIZE) + x as usize;
-                let global_idx = (tile_idx * TILE_FEATS) + feat_offset;
-                buf[global_idx] = val;
-            }
-        };
+        let mut write_feature =
+            |x: i32, y: i32, feat_offset: usize, val: f32, buf: &mut [f32], mask: &mut [bool]| {
+                if x >= 0 && x < GRID_SIZE as i32 && y >= 0 && y < GRID_SIZE as i32 {
+                    let tile_idx = (y as usize * GRID_SIZE) + x as usize;
+
+                    // Mark this tile as having data
+                    mask[tile_idx] = true;
+
+                    let global_idx = (tile_idx * TILE_FEATS) + feat_offset;
+                    buf[global_idx] = val;
+                }
+            };
 
         // --- LOGIC: Snake Processing (Matches your original Batcher) ---
         let target_id = &item.winning_snake_id;
@@ -139,7 +146,10 @@ fn main() {
             }
         }
 
-        let mut process_snake = |snake: &Snake, offset: usize, buf: &mut [f32]| {
+        let mut process_snake = |snake: &Snake,
+                                 offset: usize,
+                                 buf: &mut [f32],
+                                 mask: &mut [bool]| {
             let len = snake.body.len();
             let norm_health = snake.health as f32 / 100.0;
             let norm_len = len as f32 / area;
@@ -147,42 +157,49 @@ fn main() {
             for (i, part) in snake.body.iter().enumerate() {
                 // 1. Anchors
                 if i == 0 {
-                    write_feature(part.x, part.y, offset + 0, 1.0, buf); // Head
+                    write_feature(part.x, part.y, offset + 0, 1.0, buf, mask); // Head
                 } else if i == 1 {
-                    write_feature(part.x, part.y, offset + 1, 1.0, buf); // Neck
+                    write_feature(part.x, part.y, offset + 1, 1.0, buf, mask); // Neck
                 } else if i == len - 1 {
-                    write_feature(part.x, part.y, offset + 2, 1.0, buf); // Tail
+                    write_feature(part.x, part.y, offset + 2, 1.0, buf, mask); // Tail
                 } else {
                     // Body Gradient
                     let turns_remaining = (len - i) as f32;
                     let gradient_val = turns_remaining / len as f32;
-                    write_feature(part.x, part.y, offset + 3, gradient_val, buf);
+                    write_feature(part.x, part.y, offset + 3, gradient_val, buf, mask);
                 }
 
                 // 2. Holographic Stats
-                write_feature(part.x, part.y, offset + 4, norm_health, buf);
-                write_feature(part.x, part.y, offset + 5, norm_len, buf);
+                write_feature(part.x, part.y, offset + 4, norm_health, buf, mask);
+                write_feature(part.x, part.y, offset + 5, norm_len, buf, mask);
             }
         };
 
         // 1. My Snake (Offset 0)
         if let Some(me) = my_snake {
-            process_snake(&me, 0, &mut buffer);
+            process_snake(&me, 0, &mut buffer, &mut occupied);
         }
 
         // 2. Enemies (Offset 6, 12, 18)
         enemies.sort_by(|a, b| a.id.cmp(&b.id));
         for (i, enemy) in enemies.iter().take(3).enumerate() {
             let offset = 6 + (i * 6);
-            process_snake(enemy, offset, &mut buffer);
+            process_snake(enemy, offset, &mut buffer, &mut occupied);
         }
 
         // 3. Global Features
         for food in item.food {
-            write_feature(food.x, food.y, 24, 1.0, &mut buffer);
+            write_feature(food.x, food.y, 24, 1.0, &mut buffer, &mut occupied);
         }
         for hazard in item.hazards {
-            write_feature(hazard.x, hazard.y, 25, 1.0, &mut buffer);
+            write_feature(hazard.x, hazard.y, 25, 1.0, &mut buffer, &mut occupied);
+        }
+
+        for tile_idx in 0..SEQ_LEN {
+            if !occupied[tile_idx] {
+                let global_idx = (tile_idx * TILE_FEATS) + 26;
+                buffer[global_idx] = 1.0;
+            }
         }
 
         // --- METADATA & LABEL ---

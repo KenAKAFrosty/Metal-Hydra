@@ -209,13 +209,17 @@ fn preprocess(req: &GameMoveRequest) -> (Array4<f32>, Array2<f32>) {
 // Constants for Transformer
 const GRID_SIZE: usize = 11;
 const SEQ_LEN: usize = 121;
-const TILE_FEATS: usize = 26;
+const TILE_FEATS: usize = 27;
 const META_FEATS: usize = 2;
 
 // Helper to set features safely
-fn set_feat(grid: &mut [f32], x: i32, y: i32, feat: usize, val: f32) {
+fn set_feat(grid: &mut [f32], occupied: &mut [bool], x: i32, y: i32, feat: usize, val: f32) {
     if x >= 0 && x < GRID_SIZE as i32 && y >= 0 && y < GRID_SIZE as i32 {
         let tile_idx = (y as usize * GRID_SIZE) + x as usize;
+        
+        // Mark as occupied
+        occupied[tile_idx] = true;
+
         let vec_idx = (tile_idx * TILE_FEATS) + feat;
         grid[vec_idx] = val;
     }
@@ -225,8 +229,11 @@ fn preprocess_transformer(req: &GameMoveRequest) -> (Array3<f32>, Array2<f32>) {
     let (w, h) = (req.board.width, req.board.height);
     let area = (w * h) as f32;
     
-    // 1. Tiles [1, 121, 26]
+    // 1. Tiles [1, 121, 27]
     let mut grid = vec![0.0f32; SEQ_LEN * TILE_FEATS];
+    
+    // CHANGED: Initialize occupancy mask
+    let mut occupied = vec![false; SEQ_LEN];
     
     let my_id = &req.you.id;
     let mut enemies: Vec<&Snake> = req.board.snakes.iter()
@@ -234,8 +241,7 @@ fn preprocess_transformer(req: &GameMoveRequest) -> (Array3<f32>, Array2<f32>) {
         .collect();
     enemies.sort_by_key(|s| &s.id);
 
-    // Helper to process any snake into the grid at a specific feature offset
-    // Offsets: Me=0, Enemies=6, 12, 18
+    // Helper to process any snake into the grid
     let mut process_snake = |snake: &Snake, offset: usize| {
         let len = snake.body.len();
         let norm_health = snake.health as f32 / 100.0;
@@ -245,26 +251,21 @@ fn preprocess_transformer(req: &GameMoveRequest) -> (Array3<f32>, Array2<f32>) {
             let x = part.x as i32;
             let y = part.y as i32;
 
-            // 1. ANCHORS (Binary)
+            // Pass &mut occupied to set_feat
             if i == 0 {
-                set_feat(&mut grid, x, y, offset + 0, 1.0); // Head
+                set_feat(&mut grid, &mut occupied, x, y, offset + 0, 1.0); // Head
             } else if i == 1 {
-                set_feat(&mut grid, x, y, offset + 1, 1.0); // Neck
+                set_feat(&mut grid, &mut occupied, x, y, offset + 1, 1.0); // Neck
             } else if i == len - 1 {
-                set_feat(&mut grid, x, y, offset + 2, 1.0); // Tail
+                set_feat(&mut grid, &mut occupied, x, y, offset + 2, 1.0); // Tail
             } else {
-                // 2. MIDDLE BODY (Continuous Gradient)
-                // We only fill this for parts strictly between Neck and Tail.
-                // Formula: Turns Remaining / Total Length
                 let turns_remaining = (len - i) as f32;
                 let gradient_val = turns_remaining / len as f32;
-                
-                set_feat(&mut grid, x, y, offset + 3, gradient_val);
+                set_feat(&mut grid, &mut occupied, x, y, offset + 3, gradient_val);
             }
 
-            // 3. HOLOGRAPHIC STATS (On every segment)
-            set_feat(&mut grid, x, y, offset + 4, norm_health);
-            set_feat(&mut grid, x, y, offset + 5, norm_len);
+            set_feat(&mut grid, &mut occupied, x, y, offset + 4, norm_health);
+            set_feat(&mut grid, &mut occupied, x, y, offset + 5, norm_len);
         }
     };
 
@@ -277,10 +278,19 @@ fn preprocess_transformer(req: &GameMoveRequest) -> (Array3<f32>, Array2<f32>) {
     }
 
     for f in &req.board.food {
-        set_feat(&mut grid, f.x as i32, f.y as i32, 24, 1.0);
+        set_feat(&mut grid, &mut occupied, f.x as i32, f.y as i32, 24, 1.0);
     }
     for hz in &req.board.hazards {
-        set_feat(&mut grid, hz.x as i32, hz.y as i32, 25, 1.0);
+        set_feat(&mut grid, &mut occupied, hz.x as i32, hz.y as i32, 25, 1.0);
+    }
+
+    // CHANGED: Final pass for Empty Tiles (Feature Index 26)
+    for tile_idx in 0..SEQ_LEN {
+        if !occupied[tile_idx] {
+            // We calculate index manually since we aren't using x/y here
+            let vec_idx = (tile_idx * TILE_FEATS) + 26;
+            grid[vec_idx] = 1.0;
+        }
     }
 
     // 2. Metadata [1, 2]
@@ -416,20 +426,23 @@ async fn main() -> anyhow::Result<()> {
         "transformer_scout" => {
              // MUST MATCH TRAINING CONFIG!
             let config = BattleModelConfig {
-                d_model: 128,
-                d_ff: 512,
-                n_heads: 4,
-                n_layers: 6,
+                d_model: 64,
+                d_ff: 256,
+                n_heads: 2,
+                n_layers: 4,
                 num_classes: 4,
-                tile_features: 26,
+                tile_features: 27,
                 meta_features: 2,
                 grid_size: 11,
+                dropout: 0.1,
+                head_hidden_size: 128,
+                num_queries: 8,
             };
 
              
              // Load the record explicitly
              let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("model-47".into(), &device)
+                .load("model-8".into(), &device)
                 .expect("Failed to load transformer weights");
              
              // Init and load
