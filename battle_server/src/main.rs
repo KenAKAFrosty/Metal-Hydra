@@ -394,7 +394,7 @@ async fn handle_move(
             _ => panic!("Model / Data Mismatch!"),
         };
 
-        println!("Probs: {:?}", output);
+        println!("Turn: {:?} | Probs: {:?}", req.turn , output);
         let best_idx = output.argmax(1).into_scalar() as usize;
         let moves = ["up", "right", "down", "left"];
         (moves[best_idx].to_string(), "🤖".to_string())
@@ -443,7 +443,7 @@ async fn main() -> anyhow::Result<()> {
              
              // Load the record explicitly
              let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("model-13".into(), &device)
+                .load("model-19".into(), &device)
                 .expect("Failed to load transformer weights");
              
              // Init and load
