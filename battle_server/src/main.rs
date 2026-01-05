@@ -42,7 +42,19 @@ impl Model {
     pub fn color(&self) -> &'static str {
         match self {
             Model::Original(_) => "#D34516",
-            Model::Transformer(_) => "#0000FF",
+            Model::Transformer(_) => "#bbaa0eff",
+        }
+    }
+    pub fn head(&self) -> &'static str { 
+        match self { 
+            Model::Original(_) => "egg",
+            Model::Transformer(_) => "egg",
+        }
+    }
+    pub fn tail(&self) -> &'static str { 
+        match self { 
+            Model::Original(_) => "egg",
+            Model::Transformer(_) => "duck",
         }
     }
 }
@@ -314,13 +326,17 @@ fn preprocess_transformer(req: &GameMoveRequest) -> (Array3<f32>, Array2<f32>) {
 
 async fn handle_info(State(state): State<AppState>) -> Json<InfoResponse> {
     // Unwrap the model from the AppState struct
-    let color = state.model.lock().expect("mutex poisoned").color();
+    let (color, head, tail) = { 
+        let model = state.model.lock().expect("mutex poisoned");
+        
+        (model.color(), model.head(), model.tail())
+    };
 
     Json(InfoResponse {
         apiversion: "1".into(),
         color: color.into(),
-        head: "cute-dragon".into(),
-        tail: "dragon".into(),
+        head: head.into(),
+        tail: tail.into(),
     })
 }
 
@@ -443,7 +459,7 @@ async fn main() -> anyhow::Result<()> {
              
              // Load the record explicitly
              let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("model-37".into(), &device)
+                .load("model-41".into(), &device)
                 .expect("Failed to load transformer weights");
              
              // Init and load
