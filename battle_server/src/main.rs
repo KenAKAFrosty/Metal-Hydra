@@ -394,6 +394,7 @@ async fn handle_move(
             _ => panic!("Model / Data Mismatch!"),
         };
 
+        println!("Probs: {:?}", output);
         let best_idx = output.argmax(1).into_scalar() as usize;
         let moves = ["up", "right", "down", "left"];
         (moves[best_idx].to_string(), "🤖".to_string())
