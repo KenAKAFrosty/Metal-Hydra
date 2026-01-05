@@ -42,7 +42,7 @@ impl Model {
     pub fn color(&self) -> &'static str {
         match self {
             Model::Original(_) => "#D34516",
-            Model::Transformer(_) => "#bbaa0e",
+            Model::Transformer(_) => "#D34516",
         }
     }
     pub fn head(&self) -> &'static str { 
