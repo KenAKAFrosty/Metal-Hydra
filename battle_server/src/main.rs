@@ -48,7 +48,7 @@ impl Model {
     pub fn head(&self) -> &'static str { 
         match self { 
             Model::Original(_) => "egg",
-            Model::Transformer(_) => "egg",
+            Model::Transformer(_) => "cute-dragon",
         }
     }
     pub fn tail(&self) -> &'static str { 
