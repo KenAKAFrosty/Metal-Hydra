@@ -148,12 +148,13 @@ fn main() {
     );
 }
 
-const START_VAL: f32 = 0.2; // Everyone starts here. It's a "Good Game" state.
+// --- CONFIG ---
+// Winners start strong and finish strongest.
+const WINNER_START: f32 = 0.5;
+const WINNER_END: f32 = 1.0;
 
-const WINNER_END_VAL: f32 = 1.0;
-const LOSER_END_VAL: f32 = -0.3; // Deteriorates to this before death
-
-const DEATH_PENALTY: f32 = -1.0; // The cliff
+// Death is absolute.
+const DEATH_PENALTY: f32 = -1.0;
 
 fn process_game_buffer(
     turns: &[TrainingExample],
@@ -168,19 +169,6 @@ fn process_game_buffer(
     let winner_id = &turns[0].winning_snake_id;
     let last_turn_index = turns.last().unwrap().turn;
 
-    // 1. Map Death Turns
-    let mut loser_death_map: HashMap<String, u32> = HashMap::new();
-    for turn_data in turns {
-        for snake in &turn_data.snakes {
-            if snake.id != *winner_id {
-                if let Some(d) = &snake.death {
-                    loser_death_map.insert(snake.id.clone(), d.turn);
-                }
-            }
-        }
-    }
-
-    // 2. Process
     for window in turns.windows(2) {
         let current_frame = &window[0];
         let next_frame = &window[1];
@@ -203,41 +191,41 @@ fn process_game_buffer(
 
                 let move_idx = get_move_index(head_curr, head_next);
                 let target_value;
-
-                // --- LINEAR INTERPOLATION LOGIC ---
-
-                let current_turn = current_frame.turn as f32;
+                let should_write;
 
                 if snake.id == *winner_id {
-                    // WINNER: Lerp from START (0.2) to WINNER_END (1.0)
-                    // Denominator is the Game Length
+                    // --- WINNER: KEEP ALL ---
+                    // "Mimic this, it works."
+                    let current_turn = current_frame.turn as f32;
                     let total_turns = last_turn_index as f32;
-                    let ratio = current_turn / total_turns; // 0.0 to 1.0
 
-                    target_value = START_VAL + (ratio * (WINNER_END_VAL - START_VAL));
-                } else {
-                    // LOSER: Lerp from START (0.2) to LOSER_END (-0.3)
-                    if next_s.death.is_some() {
-                        target_value = DEATH_PENALTY;
+                    let ratio = if total_turns > 0.0 {
+                        current_turn / total_turns
                     } else {
-                        let death_turn =
-                            *loser_death_map.get(&snake.id).unwrap_or(&last_turn_index);
-                        let total_turns = death_turn as f32;
+                        1.0
+                    };
 
-                        // Avoid divide by zero
-                        let ratio = if total_turns > 0.0 {
-                            current_turn / total_turns
-                        } else {
-                            1.0
-                        };
-
-                        target_value = START_VAL + (ratio * (LOSER_END_VAL - START_VAL));
+                    // Ramp from 0.5 to 1.0
+                    target_value = WINNER_START + (ratio * (WINNER_END - WINNER_START));
+                    should_write = true;
+                } else {
+                    // --- LOSER: FILTER HARD ---
+                    if next_s.death.is_some() {
+                        // "DON'T DO THIS."
+                        target_value = DEATH_PENALTY;
+                        should_write = true;
+                    } else {
+                        // "Doing okay? I don't care. I only want excellence or death."
+                        target_value = 0.0;
+                        should_write = false;
                     }
                 }
 
-                write_record_to_buffer(current_frame, snake, buffer, move_idx, target_value);
-                writer.write_all(bytemuck::cast_slice(buffer)).unwrap();
-                *count += 1;
+                if should_write {
+                    write_record_to_buffer(current_frame, snake, buffer, move_idx, target_value);
+                    writer.write_all(bytemuck::cast_slice(buffer)).unwrap();
+                    *count += 1;
+                }
             }
         }
     }
