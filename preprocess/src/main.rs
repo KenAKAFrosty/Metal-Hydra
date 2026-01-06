@@ -72,8 +72,6 @@ const META_FEATS: usize = 2;
 // Output: Features + Meta + Action(1) + Value(1)
 const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 2;
 
-const GAMMA: f32 = 0.99; // Decay rate for value calculation
-
 fn main() {
     let db_path = "../battlesnake_data.db";
     let out_path = "train_data_value.bin";
@@ -150,7 +148,13 @@ fn main() {
     );
 }
 
-// --- CORE LOGIC ---
+// Winners: Standard exponential confidence growth
+const WINNER_GAMMA: f32 = 0.995;
+
+// Losers: Linear Drift Parameters
+const LOSER_START_VAL: f32 = 0.2; // "I'm playing well"
+const LOSER_END_VAL: f32 = -0.3; // "I'm in a bad spot"
+                                 // Note: The drop is 0.5 total over the lifespan (0.2 to -0.3)
 
 fn process_game_buffer(
     turns: &[TrainingExample],
@@ -165,12 +169,10 @@ fn process_game_buffer(
     let winner_id = &turns[0].winning_snake_id;
     let last_turn_index = turns.last().unwrap().turn;
 
-    // 1. Map Death Turns for LOSERS only
+    // 1. Map Death Turns (Same as before)
     let mut loser_death_map: HashMap<String, u32> = HashMap::new();
-
     for turn_data in turns {
         for snake in &turn_data.snakes {
-            // Only map deaths for snakes that actually lost
             if snake.id != *winner_id {
                 if let Some(d) = &snake.death {
                     loser_death_map.insert(snake.id.clone(), d.turn);
@@ -179,59 +181,57 @@ fn process_game_buffer(
         }
     }
 
-    // 2. Iterate Windows (Current State -> Next State)
     for window in turns.windows(2) {
         let current_frame = &window[0];
         let next_frame = &window[1];
 
         for snake in &current_frame.snakes {
-            // A. If snake is already dead in the current frame, it makes no moves. Skip.
             if snake.death.is_some() {
                 continue;
             }
 
-            // B. Find this snake in the next frame
-            // Note: Per your insight, even if dead in 'next_frame', the body/head
-            // has updated to show the fatal move.
             if let Some(next_s) = next_frame.snakes.iter().find(|s| s.id == snake.id) {
-                // C. Calculate the Move (Action)
                 let head_curr = snake.body[0];
                 let head_next = next_s.body[0];
-                let move_idx = get_move_index(head_curr, head_next);
 
-                // D. Calculate Value (Q-Target)
+                if head_curr.x == head_next.x && head_curr.y == head_next.y {
+                    continue;
+                }
+
+                let move_idx = get_move_index(head_curr, head_next);
                 let target_value;
 
                 if snake.id == *winner_id {
-                    // --- WINNER LOGIC ---
-                    // How many turns until the game ends?
-                    // If next_frame.turn == last_turn_index, we are 1 step away from victory state.
+                    // --- WINNER LOGIC (Gamma Curve) ---
+                    // From ~0.3 up to 1.0
                     let turns_to_win = last_turn_index.saturating_sub(next_frame.turn);
-
-                    // Value is positive.
-                    // Example: Immediate win (turns_to_win = 0) -> 1.0 * 0.99^0 = 1.0
-                    target_value = 1.0 * GAMMA.powf(turns_to_win as f32);
+                    target_value = 1.0 * WINNER_GAMMA.powf(turns_to_win as f32);
                 } else {
-                    // --- LOSER LOGIC ---
-                    // Check if this specific move caused death
+                    // --- LOSER LOGIC (Linear Drift) ---
+
                     if next_s.death.is_some() {
-                        // IMMEDIATE FAILURE
-                        // This is the "Touching the hot stove" moment.
-                        // We do not decay this. It is the ground truth of a bad move.
+                        // THE CLIFF: Immediate tactical failure
                         target_value = -1.0;
                     } else {
-                        // IMPENDING DOOM
-                        // They are still alive in the next frame, but they will die eventually.
+                        // THE DRIFT: Strategic degradation
                         let death_turn =
                             *loser_death_map.get(&snake.id).unwrap_or(&last_turn_index);
-                        let turns_to_death = death_turn.saturating_sub(next_frame.turn);
 
-                        // Decay the negative signal
-                        target_value = -1.0 * GAMMA.powf(turns_to_death as f32);
+                        // Avoid divide by zero in weird edge cases
+                        if death_turn > 0 {
+                            // ratio goes from 0.0 (start) to 1.0 (death)
+                            let ratio = current_frame.turn as f32 / death_turn as f32;
+
+                            // Linear interpolation (Lerp)
+                            // 0.2 + (ratio * (-0.3 - 0.2))
+                            target_value =
+                                LOSER_START_VAL + (ratio * (LOSER_END_VAL - LOSER_START_VAL));
+                        } else {
+                            target_value = LOSER_START_VAL;
+                        }
                     }
                 }
 
-                // E. Write Record
                 write_record_to_buffer(current_frame, snake, buffer, move_idx, target_value);
                 writer.write_all(bytemuck::cast_slice(buffer)).unwrap();
                 *count += 1;
@@ -239,8 +239,6 @@ fn process_game_buffer(
         }
     }
 }
-// --- HELPER: Feature Extraction (Logic copied from previous step) ---
-
 fn write_record_to_buffer(
     item: &TrainingExample,
     focus_snake: &Snake,
