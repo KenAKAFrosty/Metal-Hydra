@@ -22,8 +22,33 @@ type B = NdArray<f32>;
 // WITHOUT locking the heavy Mutex first.
 #[derive(Clone, Copy, Debug)]
 enum ModelKind {
-    Cnn,
-    Transformer,
+    OriginalCnn,
+    HydraTransformer,
+    OxTransformer
+}
+impl ModelKind {
+    pub fn color(&self) -> &'static str {
+        match self {
+            ModelKind::OriginalCnn => "#D34516",
+            ModelKind::HydraTransformer => "#D34516",
+            ModelKind::OxTransformer => "#1E2650",
+            
+        }
+    }
+    pub fn head(&self) -> &'static str { 
+        match self { 
+            ModelKind::OriginalCnn => "egg",
+            ModelKind::HydraTransformer => "cute-dragon",
+            ModelKind::OxTransformer => "bull",
+        }
+    }
+    pub fn tail(&self) -> &'static str { 
+        match self { 
+            ModelKind::OriginalCnn => "egg",
+            ModelKind::HydraTransformer => "duck",
+            ModelKind::OxTransformer => "rocket"
+        }
+    }
 }
 
 // 2. Wrap State so we can access the Kind cheaply
@@ -37,26 +62,6 @@ struct AppState {
 enum Model { 
     Original(ModelOriginal<B>),
     Transformer(BattleModel<B>)
-}
-impl Model {
-    pub fn color(&self) -> &'static str {
-        match self {
-            Model::Original(_) => "#D34516",
-            Model::Transformer(_) => "#D34516",
-        }
-    }
-    pub fn head(&self) -> &'static str { 
-        match self { 
-            Model::Original(_) => "egg",
-            Model::Transformer(_) => "cute-dragon",
-        }
-    }
-    pub fn tail(&self) -> &'static str { 
-        match self { 
-            Model::Original(_) => "egg",
-            Model::Transformer(_) => "duck",
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -325,11 +330,9 @@ fn preprocess_transformer(req: &GameMoveRequest) -> (Array3<f32>, Array2<f32>) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async fn handle_info(State(state): State<AppState>) -> Json<InfoResponse> {
-    // Unwrap the model from the AppState struct
     let (color, head, tail) = { 
-        let model = state.model.lock().expect("mutex poisoned");
-        
-        (model.color(), model.head(), model.tail())
+        let model_kind = state.kind;        
+        (model_kind.color(), model_kind.head(), model_kind.tail())
     };
 
     Json(InfoResponse {
@@ -367,11 +370,15 @@ async fn handle_move(
     let (best_move, shout) = tokio::task::spawn_blocking(move || {
         // 1. CPU WORK (No Lock)
         let input_data = match model_kind {
-            ModelKind::Cnn => {
+            ModelKind::OriginalCnn => {
                 let (b, m) = preprocess(&req); 
                 PreprocessedData::Cnn { board: b, meta: m }
             },
-            ModelKind::Transformer => {
+            ModelKind::HydraTransformer => {
+                let (t, m) = preprocess_transformer(&req); 
+                PreprocessedData::Transformer { tiles: t, meta: m }
+            },
+            ModelKind::OxTransformer => { 
                 let (t, m) = preprocess_transformer(&req); 
                 PreprocessedData::Transformer { tiles: t, meta: m }
             }
@@ -412,7 +419,11 @@ async fn handle_move(
 
         println!("Turn: {:?} | Probs: {:?}", req.turn , output);
         let best_idx = output.argmax(1).into_scalar() as usize;
-        let moves = ["up", "right", "down", "left"];
+        let moves = match model_kind { 
+            ModelKind::OriginalCnn =>  ["up", "right", "down", "left"],
+            ModelKind::HydraTransformer =>  ["up", "right", "down", "left"],
+            ModelKind::OxTransformer => ["up","down","right","left"]
+        };
         (moves[best_idx].to_string(), "🤖".to_string())
     })
     .await
@@ -438,7 +449,7 @@ async fn main() -> anyhow::Result<()> {
     let (model_enum, kind) = match model_choice.as_str() {
         "simple_cnn_opset16" => { 
             let m = ModelOriginal::from_file("simple_cnn_opset16", &device);
-            (Model::Original(m), ModelKind::Cnn)
+            (Model::Original(m), ModelKind::OriginalCnn)
         },
         "transformer_scout" => {
              // MUST MATCH TRAINING CONFIG!
@@ -465,12 +476,38 @@ async fn main() -> anyhow::Result<()> {
              // Init and load
              let model = BattleModel::new(&config, &device).load_record(record);
              
-             (Model::Transformer(model), ModelKind::Transformer)
+             (Model::Transformer(model), ModelKind::HydraTransformer)
         },
+        "value_model" => { 
+            let config = BattleModelConfig {
+                d_model: 64,
+                d_ff: 256,
+                n_heads: 2,
+                n_layers: 4,
+                num_classes: 4,
+                tile_features: 27,
+                meta_features: 2,
+                grid_size: 11,
+                dropout: 0.1,
+                head_hidden_size: 128,
+                num_queries: 8,
+            };
+
+             
+             // Load the record explicitly
+             let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
+                .load("value-model-25".into(), &device)
+                .expect("Failed to load transformer weights");
+             
+             // Init and load
+             let model = BattleModel::new(&config, &device).load_record(record);
+             
+             (Model::Transformer(model), ModelKind::OxTransformer)
+        }
         _ => {
             println!("Unrecognized model choice, falling back to simple_cnn_opset16");
             let m = ModelOriginal::from_file("simple_cnn_opset16", &device);
-            (Model::Original(m), ModelKind::Cnn)
+            (Model::Original(m), ModelKind::OriginalCnn)
         }
     };
 

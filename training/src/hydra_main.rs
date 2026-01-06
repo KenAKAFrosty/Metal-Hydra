@@ -1,34 +1,38 @@
 #![recursion_limit = "256"]
 
-use burn::backend::{cuda::Cuda, cuda::CudaDevice, Autodiff};
+use burn::backend::{cuda::Cuda, cuda::CudaDevice, Autodiff}; // USING CUDA
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::data::dataset::Dataset;
 use burn::optim::AdamWConfig;
 use burn::prelude::*;
-use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder, Recorder};
+use burn::record::{CompactRecorder, FullPrecisionSettings, NamedMpkFileRecorder, Recorder};
 use burn::tensor::backend::AutodiffBackend;
-use burn::train::checkpoint::MetricCheckpointingStrategy;
+use burn::train::checkpoint::{FileCheckpointer, MetricCheckpointingStrategy};
 use burn::train::metric::store::{Aggregate, Direction, Split};
-use burn::train::metric::LossMetric; // FIXED: Removed NumericMetric
-use burn::train::{LearnerBuilder, RegressionOutput, TrainOutput, TrainStep, ValidStep};
+use burn::train::metric::{AccuracyMetric, LossMetric};
+use burn::train::{
+    ClassificationOutput, LearnerBuilder, MetricEarlyStoppingStrategy, TrainOutput, TrainStep,
+    ValidStep,
+};
 use bytemuck::{cast_slice, pod_read_unaligned};
 use memmap2::Mmap;
 use std::fs::File;
 use std::sync::Arc;
 
-// Update to point to your new module
-use burn_ai_model::transformer_winprob::{BattleModel, BattleModelConfig};
+// Import your model
+use burn_ai_model::transformer::{BattleModel, BattleModelConfig};
 
-// --- CONSTANTS ---
+// --- DATASET & BATCHER LOGIC ---
+
 const GRID_SIZE: usize = 11;
 const SEQ_LEN: usize = GRID_SIZE * GRID_SIZE;
 const TILE_FEATS: usize = 27;
 const META_FEATS: usize = 2;
-const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 2;
+// (121 * 26) + 2 + 1 = 3149
+const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 1;
 const BYTES_PER_RECORD: usize = FLOATS_PER_RECORD * 4;
 
-// --- DATASET ---
 struct MmapDataset {
     mmap: Arc<Mmap>,
     count: usize,
@@ -38,13 +42,16 @@ struct MmapDataset {
 
 impl MmapDataset {
     pub fn new(path: &str) -> (Self, Self) {
-        let file = File::open(path).expect("Failed to open train_data_value.bin");
+        let file = File::open(path).expect("Failed to open train_data.bin");
+        // SAFETY: We assume the file is not modified by another process while running
         let mmap = unsafe { Mmap::map(&file).expect("Failed to map file") };
         let mmap = Arc::new(mmap);
 
+        // Read header (first 8 bytes = u64 count)
         let count_u64: u64 = pod_read_unaligned(&mmap[0..8]);
         let count = count_u64 as usize;
 
+        // 95/5 Split (Since you have 1.8M examples, 5% is plenty for validation)
         let train_len = (count as f32 * 0.95) as usize;
         let valid_len = count - train_len;
 
@@ -69,31 +76,36 @@ impl MmapDataset {
     }
 }
 
+// Return Vec<f32> to the Dataloader
 impl Dataset<Vec<f32>> for MmapDataset {
     fn get(&self, index: usize) -> Option<Vec<f32>> {
         if index >= self.len {
             return None;
         }
+
         let global_idx = self.start_index + index;
+        // Skip 8 byte header
         let byte_offset = 8 + (global_idx * BYTES_PER_RECORD);
         let byte_end = byte_offset + BYTES_PER_RECORD;
+
+        // Zero-copy read from OS cache
         let bytes = &self.mmap[byte_offset..byte_end];
         let floats: &[f32] = cast_slice(bytes);
+
+        // We clone into a Vec here. This is a very fast memcpy.
         Some(floats.to_vec())
     }
+
     fn len(&self) -> usize {
         self.len
     }
 }
 
-// --- BATCHING ---
-
 #[derive(Clone, Debug)]
 struct BattlesnakeBatch<B: Backend> {
-    tiles: Tensor<B, 3>,        // [Batch, 121, 27]
-    metadata: Tensor<B, 2>,     // [Batch, 2]
-    actions: Tensor<B, 1, Int>, // [Batch]
-    values: Tensor<B, 1>,       // [Batch]
+    tiles: Tensor<B, 3>,    // [Batch, 121, 26]
+    metadata: Tensor<B, 2>, // [Batch, 2]
+    targets: Tensor<B, 1, Int>,
 }
 
 #[derive(Clone)]
@@ -105,103 +117,81 @@ impl<B: Backend> Batcher<B, Vec<f32>, BattlesnakeBatch<B>> for BinaryBatcher<B> 
     fn batch(&self, items: Vec<Vec<f32>>, device: &B::Device) -> BattlesnakeBatch<B> {
         let batch_size = items.len();
 
+        // 1. Separate vectors to ensure memory layout is perfect for conversion
         let mut tiles_vec = Vec::with_capacity(batch_size * SEQ_LEN * TILE_FEATS);
         let mut meta_vec = Vec::with_capacity(batch_size * META_FEATS);
-        let mut actions_vec = Vec::with_capacity(batch_size);
-        let mut values_vec = Vec::with_capacity(batch_size);
+        let mut targets_vec = Vec::with_capacity(batch_size);
 
         let split_idx = SEQ_LEN * TILE_FEATS;
 
         for item in items {
+            // [0 .. 3146] -> Tiles
             tiles_vec.extend_from_slice(&item[0..split_idx]);
+            // [3146 .. 3148] -> Meta
             meta_vec.extend_from_slice(&item[split_idx..split_idx + 2]);
-            actions_vec.push(item[split_idx + 2] as i32);
-            values_vec.push(item[split_idx + 3]);
+            // [3148] -> Label
+            targets_vec.push(item[split_idx + 2] as i32);
         }
 
+        // 2. To Device
         let tiles = Tensor::from_floats(
             TensorData::new(tiles_vec, [batch_size, SEQ_LEN, TILE_FEATS]),
             device,
         );
         let metadata =
             Tensor::from_floats(TensorData::new(meta_vec, [batch_size, META_FEATS]), device);
-        let actions = Tensor::from_ints(TensorData::new(actions_vec, [batch_size]), device);
-        let values = Tensor::from_floats(TensorData::new(values_vec, [batch_size]), device);
+        let targets = Tensor::from_ints(TensorData::new(targets_vec, [batch_size]), device);
 
         BattlesnakeBatch {
             tiles,
             metadata,
-            actions,
-            values,
+            targets,
         }
     }
 }
 
 // --- TRAINING STEPS ---
 
-impl<B: AutodiffBackend> TrainStep<BattlesnakeBatch<B>, RegressionOutput<B>> for BattleModel<B> {
-    fn step(&self, batch: BattlesnakeBatch<B>) -> TrainOutput<RegressionOutput<B>> {
-        let preds = self.forward(batch.tiles, batch.metadata);
+impl<B: AutodiffBackend> TrainStep<BattlesnakeBatch<B>, ClassificationOutput<B>>
+    for BattleModel<B>
+{
+    fn step(&self, batch: BattlesnakeBatch<B>) -> TrainOutput<ClassificationOutput<B>> {
+        let logits = self.forward(batch.tiles, batch.metadata);
 
-        // FIX: Extract metadata BEFORE 'gather' consumes 'preds'
-        let [batch_size, _] = preds.dims();
-        let device = preds.device();
-
-        let action_indices = batch.actions.clone().reshape([batch_size, 1]);
-
-        // 'gather' consumes 'preds', so we can't use 'preds' after this line
-        let pred_taken = preds.gather(1, action_indices);
-
-        let targets = batch.values.clone().reshape([batch_size, 1]);
-
-        let loss = burn::nn::loss::MseLoss::new().forward(
-            pred_taken.clone(),
-            targets.clone(),
-            burn::nn::loss::Reduction::Mean,
-        );
+        let loss = burn::nn::loss::CrossEntropyLossConfig::new()
+            .init(&logits.device())
+            .forward(logits.clone(), batch.targets.clone());
 
         let grads = loss.backward();
 
         TrainOutput::new(
             self,
             grads,
-            RegressionOutput {
+            ClassificationOutput {
                 loss,
-                output: pred_taken,
-                targets,
+                output: logits,
+                targets: batch.targets,
             },
         )
     }
 }
 
-impl<B: Backend> ValidStep<BattlesnakeBatch<B>, RegressionOutput<B>> for BattleModel<B> {
-    fn step(&self, batch: BattlesnakeBatch<B>) -> RegressionOutput<B> {
-        let preds = self.forward(batch.tiles, batch.metadata);
+impl<B: Backend> ValidStep<BattlesnakeBatch<B>, ClassificationOutput<B>> for BattleModel<B> {
+    fn step(&self, batch: BattlesnakeBatch<B>) -> ClassificationOutput<B> {
+        let logits = self.forward(batch.tiles, batch.metadata);
 
-        // FIX: Extract metadata BEFORE 'gather' consumes 'preds'
-        let [batch_size, _] = preds.dims();
-        let device = preds.device();
+        let loss = burn::nn::loss::CrossEntropyLossConfig::new()
+            .init(&logits.device())
+            .forward(logits.clone(), batch.targets.clone());
 
-        let action_indices = batch.actions.clone().reshape([batch_size, 1]);
-
-        // 'gather' consumes 'preds'
-        let pred_taken = preds.gather(1, action_indices);
-
-        let targets = batch.values.clone().reshape([batch_size, 1]);
-
-        let loss = burn::nn::loss::MseLoss::new().forward(
-            pred_taken.clone(),
-            targets.clone(),
-            burn::nn::loss::Reduction::Mean,
-        );
-
-        RegressionOutput {
+        ClassificationOutput {
             loss,
-            output: pred_taken,
-            targets,
+            output: logits,
+            targets: batch.targets,
         }
     }
 }
+
 // --- MAIN ---
 
 type MyBackend = Cuda;
@@ -230,20 +220,28 @@ async fn main() {
     };
 
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
+
     let model: BattleModel<MyAutodiffBackend> = BattleModel::new(&config, &device);
 
     println!("Num params in model: {}", model.num_params());
+
+    // let model = model
+    //     .load_file("../transformer_optimized", &CompactRecorder::new(), &device)
+    //     .expect("Could not load model weights! Check path and config compatibility.");
 
     let optimizer = AdamWConfig::new()
         .with_weight_decay(1e-2)
         .with_cautious_weight_decay(true)
         .init();
 
-    let (dataset_train, dataset_valid) = MmapDataset::new("../preprocess/train_data_value.bin");
+    // --- LOAD DATASET (BINARY) ---
+    // Make sure preprocess has run and generated this file!
+    let (dataset_train, dataset_valid) = MmapDataset::new("../preprocess/train_data.bin");
 
     let batcher = BinaryBatcher::<MyAutodiffBackend> {
         device: device.clone(),
     };
+
     let batcher_valid = BinaryBatcher::<MyBackend> {
         device: device.clone(),
     };
@@ -251,7 +249,7 @@ async fn main() {
     let dataloader_train = DataLoaderBuilder::new(batcher)
         .batch_size(batch_size)
         .shuffle(42)
-        .num_workers(4)
+        .num_workers(4) // Parallel disk reads
         .build(dataset_train);
 
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
@@ -259,15 +257,17 @@ async fn main() {
         .num_workers(2)
         .build(dataset_valid);
 
-    let artifact_dir = "/tmp/battlesnake-transformer-value";
+    let artifact_dir = "/tmp/battlesnake-transformer-drone";
 
     let learner = LearnerBuilder::new(artifact_dir)
+        .metric_train_numeric(AccuracyMetric::new())
         .metric_train_numeric(LossMetric::new())
+        .metric_valid_numeric(AccuracyMetric::new())
         .metric_valid_numeric(LossMetric::new())
         .with_checkpointing_strategy(MetricCheckpointingStrategy::new(
-            &LossMetric::<MyBackend>::new(),
+            &AccuracyMetric::<MyBackend>::new(),
             Aggregate::Mean,
-            Direction::Lowest,
+            Direction::Highest,
             Split::Valid,
         ))
         .with_file_checkpointer(recorder.clone())
@@ -278,7 +278,7 @@ async fn main() {
 
     model_trained
         .model
-        .save_file("transformer_value", &recorder)
+        .save_file("transformer_drone", &recorder)
         .expect("Failed to save model");
 
     println!("Training complete.");
