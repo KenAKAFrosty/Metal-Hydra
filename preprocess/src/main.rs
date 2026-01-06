@@ -148,13 +148,12 @@ fn main() {
     );
 }
 
-// Winners: Standard exponential confidence growth
-const WINNER_GAMMA: f32 = 0.995;
+const START_VAL: f32 = 0.2; // Everyone starts here. It's a "Good Game" state.
 
-// Losers: Linear Drift Parameters
-const LOSER_START_VAL: f32 = 0.2; // "I'm playing well"
-const LOSER_END_VAL: f32 = -0.3; // "I'm in a bad spot"
-                                 // Note: The drop is 0.5 total over the lifespan (0.2 to -0.3)
+const WINNER_END_VAL: f32 = 1.0;
+const LOSER_END_VAL: f32 = -0.3; // Deteriorates to this before death
+
+const DEATH_PENALTY: f32 = -1.0; // The cliff
 
 fn process_game_buffer(
     turns: &[TrainingExample],
@@ -169,7 +168,7 @@ fn process_game_buffer(
     let winner_id = &turns[0].winning_snake_id;
     let last_turn_index = turns.last().unwrap().turn;
 
-    // 1. Map Death Turns (Same as before)
+    // 1. Map Death Turns
     let mut loser_death_map: HashMap<String, u32> = HashMap::new();
     for turn_data in turns {
         for snake in &turn_data.snakes {
@@ -181,19 +180,23 @@ fn process_game_buffer(
         }
     }
 
+    // 2. Process
     for window in turns.windows(2) {
         let current_frame = &window[0];
         let next_frame = &window[1];
 
         for snake in &current_frame.snakes {
+            // Skip dead
             if snake.death.is_some() {
                 continue;
             }
 
+            // Find next
             if let Some(next_s) = next_frame.snakes.iter().find(|s| s.id == snake.id) {
                 let head_curr = snake.body[0];
                 let head_next = next_s.body[0];
 
+                // Static head check
                 if head_curr.x == head_next.x && head_curr.y == head_next.y {
                     continue;
                 }
@@ -201,34 +204,34 @@ fn process_game_buffer(
                 let move_idx = get_move_index(head_curr, head_next);
                 let target_value;
 
-                if snake.id == *winner_id {
-                    // --- WINNER LOGIC (Gamma Curve) ---
-                    // From ~0.3 up to 1.0
-                    let turns_to_win = last_turn_index.saturating_sub(next_frame.turn);
-                    target_value = 1.0 * WINNER_GAMMA.powf(turns_to_win as f32);
-                } else {
-                    // --- LOSER LOGIC (Linear Drift) ---
+                // --- LINEAR INTERPOLATION LOGIC ---
 
+                let current_turn = current_frame.turn as f32;
+
+                if snake.id == *winner_id {
+                    // WINNER: Lerp from START (0.2) to WINNER_END (1.0)
+                    // Denominator is the Game Length
+                    let total_turns = last_turn_index as f32;
+                    let ratio = current_turn / total_turns; // 0.0 to 1.0
+
+                    target_value = START_VAL + (ratio * (WINNER_END_VAL - START_VAL));
+                } else {
+                    // LOSER: Lerp from START (0.2) to LOSER_END (-0.3)
                     if next_s.death.is_some() {
-                        // THE CLIFF: Immediate tactical failure
-                        target_value = -1.0;
+                        target_value = DEATH_PENALTY;
                     } else {
-                        // THE DRIFT: Strategic degradation
                         let death_turn =
                             *loser_death_map.get(&snake.id).unwrap_or(&last_turn_index);
+                        let total_turns = death_turn as f32;
 
-                        // Avoid divide by zero in weird edge cases
-                        if death_turn > 0 {
-                            // ratio goes from 0.0 (start) to 1.0 (death)
-                            let ratio = current_frame.turn as f32 / death_turn as f32;
-
-                            // Linear interpolation (Lerp)
-                            // 0.2 + (ratio * (-0.3 - 0.2))
-                            target_value =
-                                LOSER_START_VAL + (ratio * (LOSER_END_VAL - LOSER_START_VAL));
+                        // Avoid divide by zero
+                        let ratio = if total_turns > 0.0 {
+                            current_turn / total_turns
                         } else {
-                            target_value = LOSER_START_VAL;
-                        }
+                            1.0
+                        };
+
+                        target_value = START_VAL + (ratio * (LOSER_END_VAL - START_VAL));
                     }
                 }
 
@@ -239,6 +242,7 @@ fn process_game_buffer(
         }
     }
 }
+
 fn write_record_to_buffer(
     item: &TrainingExample,
     focus_snake: &Snake,
