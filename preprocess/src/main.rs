@@ -148,12 +148,12 @@ fn main() {
     );
 }
 
-const WINNER_START: f32 = 0.5;
-const WINNER_END: f32 = 1.0;
-const DEATH_PENALTY: f32 = -1.0;
-// The value assigned to actions NOT taken.
-// 0.0 is safe. -0.1 would aggressively discourage deviation.
-const UNTAKEN_VAL: f32 = 0.0;
+// --- CONSTANTS ---
+const START_VAL: f32 = 0.20; // "I have hope"
+const WINNER_END_VAL: f32 = 1.0; // "Victory!"
+const LOSER_END_VAL: f32 = -0.5; // "I am cornered" (Soft failure)
+const DEATH_PENALTY: f32 = -1.0; // "I died" (Hard failure)
+const UNTAKEN_VAL: f32 = 0.0; // "Unknown/Neutral"
 
 fn process_game_buffer(
     turns: &[TrainingExample],
@@ -168,67 +168,84 @@ fn process_game_buffer(
     let winner_id = &turns[0].winning_snake_id;
     let last_turn_index = turns.last().unwrap().turn;
 
+    // 1. Pre-calculate Death Turns for all snakes
+    //    This allows us to scale the "Loser Gradient" based on their specific lifespan.
+    let mut death_map: HashMap<String, u32> = HashMap::new();
+    for turn_data in turns {
+        for snake in &turn_data.snakes {
+            // We usually only care about losers here, but tracking everyone is fine
+            if let Some(d) = &snake.death {
+                death_map.insert(snake.id.clone(), d.turn);
+            }
+        }
+    }
+
     for window in turns.windows(2) {
         let current_frame = &window[0];
         let next_frame = &window[1];
 
         for snake in &current_frame.snakes {
-            // 1. Skip if dead
+            // Skip if already dead
             if snake.death.is_some() {
                 continue;
             }
 
-            // 2. Find in next frame
+            // Find snake in next frame to determine the move taken
             if let Some(next_s) = next_frame.snakes.iter().find(|s| s.id == snake.id) {
                 let head_curr = snake.body[0];
                 let head_next = next_s.body[0];
 
-                // 3. Static head check (Safety against invalid data)
+                // Skip static frames (shouldn't happen in valid games)
                 if head_curr.x == head_next.x && head_curr.y == head_next.y {
                     continue;
                 }
 
-                // 4. Calculate Logic
                 let taken_move_idx = get_move_index(head_curr, head_next) as usize;
 
-                // Initialize target vector with the baseline (e.g. 0.0)
-                let mut target_vector = [UNTAKEN_VAL; 4];
-                let mut should_write = false;
+                // Only process valid moves (0=Up, 1=Down, 2=Right, 3=Left)
+                if taken_move_idx < 4 {
+                    let mut target_vector = [UNTAKEN_VAL; 4];
+                    let calculated_value;
 
-                if snake.id == *winner_id {
-                    // --- WINNER ---
-                    let current_turn = current_frame.turn as f32;
-                    let total_turns = last_turn_index as f32;
+                    // --- VALUE LOGIC ---
+                    if snake.id == *winner_id {
+                        // WINNER: Linearly ramp from 0.2 -> 1.0 over the WHOLE game
+                        let ratio = if last_turn_index > 0 {
+                            current_frame.turn as f32 / last_turn_index as f32
+                        } else {
+                            1.0
+                        };
 
-                    let ratio = if total_turns > 0.0 {
-                        current_turn / total_turns
+                        // Lerp: Start + (t * (End - Start))
+                        calculated_value = START_VAL + (ratio * (WINNER_END_VAL - START_VAL));
                     } else {
-                        1.0
-                    };
+                        // LOSER Check
+                        if next_s.death.is_some() {
+                            // THE CLIFF: Immediate tactical failure (Next frame is death)
+                            calculated_value = DEATH_PENALTY;
+                        } else {
+                            // THE SLIDE: Strategic degradation
+                            // Calculate ratio based on THIS snake's lifespan
+                            let my_death_turn =
+                                *death_map.get(&snake.id).unwrap_or(&last_turn_index);
 
-                    // Linear ramp: 0.5 -> 1.0
-                    let val = WINNER_START + (ratio * (WINNER_END - WINNER_START));
+                            let ratio = if my_death_turn > 0 {
+                                current_frame.turn as f32 / my_death_turn as f32
+                            } else {
+                                1.0
+                            };
 
-                    // Assign to the specific move taken
-                    if taken_move_idx < 4 {
-                        target_vector[taken_move_idx] = val;
-                        should_write = true;
-                    }
-                } else {
-                    // --- LOSER ---
-                    if next_s.death.is_some() {
-                        // Immediate Death = -1.0
-                        if taken_move_idx < 4 {
-                            target_vector[taken_move_idx] = DEATH_PENALTY;
-                            should_write = true;
+                            // Lerp: Start -> -0.5 (Soft End)
+                            // A snake that dies on turn 10 drops fast.
+                            // A snake that dies on turn 100 drops slow.
+                            calculated_value = START_VAL + (ratio * (LOSER_END_VAL - START_VAL));
                         }
                     }
-                    // Note: We filter out surviving loser moves entirely
-                }
 
-                if should_write {
-                    // Important: You need to update `write_record_to_buffer` signature
-                    // to accept `target_vector: [f32; 4]` instead of `action` and `value`.
+                    // Assign value to the specific move taken
+                    target_vector[taken_move_idx] = calculated_value;
+
+                    // Write to binary buffer
                     write_record_to_buffer(current_frame, snake, buffer, target_vector);
                     writer.write_all(bytemuck::cast_slice(buffer)).unwrap();
                     *count += 1;
