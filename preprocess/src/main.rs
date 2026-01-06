@@ -149,9 +149,9 @@ fn main() {
 }
 
 // --- CONSTANTS ---
-const START_VAL: f32 = 0.20; // "I have hope"
+const START_VAL: f32 = 0.30; // "I have hope"
 const WINNER_END_VAL: f32 = 1.0; // "Victory!"
-const LOSER_END_VAL: f32 = -0.5; // "I am cornered" (Soft failure)
+const LOSER_END_VAL: f32 = -0.3; // "I am cornered" (Soft failure)
 const DEATH_PENALTY: f32 = -1.0; // "I died" (Hard failure)
 const UNTAKEN_VAL: f32 = 0.0; // "Unknown/Neutral"
 
