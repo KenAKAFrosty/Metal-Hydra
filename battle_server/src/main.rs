@@ -31,7 +31,7 @@ impl ModelKind {
         match self {
             ModelKind::OriginalCnn => "#D34516",
             ModelKind::HydraTransformer => "#D34516",
-            ModelKind::OxTransformer => "#422C44",
+            ModelKind::OxTransformer => "#542F3E",
             
         }
     }
@@ -496,7 +496,7 @@ async fn main() -> anyhow::Result<()> {
              
              // Load the record explicitly
              let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("model-3".into(), &device)
+                .load("model-1".into(), &device)
                 .expect("Failed to load transformer weights");
              
              // Init and load
