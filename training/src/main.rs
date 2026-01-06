@@ -25,7 +25,7 @@ const GRID_SIZE: usize = 11;
 const SEQ_LEN: usize = GRID_SIZE * GRID_SIZE;
 const TILE_FEATS: usize = 27;
 const META_FEATS: usize = 2;
-const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 2;
+const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 4;
 const BYTES_PER_RECORD: usize = FLOATS_PER_RECORD * 4;
 
 // --- DATASET ---
@@ -90,10 +90,9 @@ impl Dataset<Vec<f32>> for MmapDataset {
 
 #[derive(Clone, Debug)]
 struct BattlesnakeBatch<B: Backend> {
-    tiles: Tensor<B, 3>,        // [Batch, 121, 27]
-    metadata: Tensor<B, 2>,     // [Batch, 2]
-    actions: Tensor<B, 1, Int>, // [Batch]
-    values: Tensor<B, 1>,       // [Batch]
+    tiles: Tensor<B, 3>,
+    metadata: Tensor<B, 2>,
+    targets: Tensor<B, 2>, // [Batch, 4]
 }
 
 #[derive(Clone)]
@@ -107,16 +106,24 @@ impl<B: Backend> Batcher<B, Vec<f32>, BattlesnakeBatch<B>> for BinaryBatcher<B> 
 
         let mut tiles_vec = Vec::with_capacity(batch_size * SEQ_LEN * TILE_FEATS);
         let mut meta_vec = Vec::with_capacity(batch_size * META_FEATS);
-        let mut actions_vec = Vec::with_capacity(batch_size);
-        let mut values_vec = Vec::with_capacity(batch_size);
+        // Capacity = batch_size * 4 outputs
+        let mut targets_vec = Vec::with_capacity(batch_size * 4);
 
         let split_idx = SEQ_LEN * TILE_FEATS;
 
         for item in items {
+            // Tiles
             tiles_vec.extend_from_slice(&item[0..split_idx]);
+
+            // Metadata (2 floats)
             meta_vec.extend_from_slice(&item[split_idx..split_idx + 2]);
-            actions_vec.push(item[split_idx + 2] as i32);
-            values_vec.push(item[split_idx + 3]);
+
+            // Targets (4 floats)
+            // split_idx + 2  -> Up
+            // split_idx + 3  -> Down
+            // split_idx + 4  -> Right
+            // split_idx + 5  -> Left
+            targets_vec.extend_from_slice(&item[split_idx + 2..split_idx + 6]);
         }
 
         let tiles = Tensor::from_floats(
@@ -125,41 +132,36 @@ impl<B: Backend> Batcher<B, Vec<f32>, BattlesnakeBatch<B>> for BinaryBatcher<B> 
         );
         let metadata =
             Tensor::from_floats(TensorData::new(meta_vec, [batch_size, META_FEATS]), device);
-        let actions = Tensor::from_ints(TensorData::new(actions_vec, [batch_size]), device);
-        let values = Tensor::from_floats(TensorData::new(values_vec, [batch_size]), device);
+
+        // Shape: [Batch, 4]
+        let targets = Tensor::from_floats(TensorData::new(targets_vec, [batch_size, 4]), device);
 
         BattlesnakeBatch {
             tiles,
             metadata,
-            actions,
-            values,
+            targets,
         }
     }
 }
 
 // --- TRAINING STEPS ---
-
 impl<B: AutodiffBackend> TrainStep<BattlesnakeBatch<B>, RegressionOutput<B>> for BattleModel<B> {
     fn step(&self, batch: BattlesnakeBatch<B>) -> TrainOutput<RegressionOutput<B>> {
+        // 1. Forward Pass
+        // Output Shape: [Batch, 4]
         let preds = self.forward(batch.tiles, batch.metadata);
 
-        // FIX: Extract metadata BEFORE 'gather' consumes 'preds'
-        let [batch_size, _] = preds.dims();
-        let device = preds.device();
-
-        let action_indices = batch.actions.clone().reshape([batch_size, 1]);
-
-        // 'gather' consumes 'preds', so we can't use 'preds' after this line
-        let pred_taken = preds.gather(1, action_indices);
-
-        let targets = batch.values.clone().reshape([batch_size, 1]);
-
+        // 2. Loss Calculation
+        // Compare the full vectors.
+        // Taken action matches Target (e.g. 0.8).
+        // Untaken actions match 0.0.
         let loss = burn::nn::loss::MseLoss::new().forward(
-            pred_taken.clone(),
-            targets.clone(),
+            preds.clone(),
+            batch.targets.clone(),
             burn::nn::loss::Reduction::Mean,
         );
 
+        // 3. Backward Pass
         let grads = loss.backward();
 
         TrainOutput::new(
@@ -167,38 +169,28 @@ impl<B: AutodiffBackend> TrainStep<BattlesnakeBatch<B>, RegressionOutput<B>> for
             grads,
             RegressionOutput {
                 loss,
-                output: pred_taken,
-                targets,
+                output: preds,
+                targets: batch.targets,
             },
         )
     }
 }
 
+// Don't forget to update ValidStep similarly!
 impl<B: Backend> ValidStep<BattlesnakeBatch<B>, RegressionOutput<B>> for BattleModel<B> {
     fn step(&self, batch: BattlesnakeBatch<B>) -> RegressionOutput<B> {
         let preds = self.forward(batch.tiles, batch.metadata);
 
-        // FIX: Extract metadata BEFORE 'gather' consumes 'preds'
-        let [batch_size, _] = preds.dims();
-        let device = preds.device();
-
-        let action_indices = batch.actions.clone().reshape([batch_size, 1]);
-
-        // 'gather' consumes 'preds'
-        let pred_taken = preds.gather(1, action_indices);
-
-        let targets = batch.values.clone().reshape([batch_size, 1]);
-
         let loss = burn::nn::loss::MseLoss::new().forward(
-            pred_taken.clone(),
-            targets.clone(),
+            preds.clone(),
+            batch.targets.clone(),
             burn::nn::loss::Reduction::Mean,
         );
 
         RegressionOutput {
             loss,
-            output: pred_taken,
-            targets,
+            output: preds,
+            targets: batch.targets,
         }
     }
 }

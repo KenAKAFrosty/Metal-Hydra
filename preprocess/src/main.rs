@@ -69,8 +69,8 @@ const SEQ_LEN: usize = GRID_SIZE * GRID_SIZE;
 const TILE_FEATS: usize = 27; // 26 + IsEmpty
 const META_FEATS: usize = 2;
 
-// Output: Features + Meta + Action(1) + Value(1)
-const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 2;
+// (SEQ_LEN * TILE_FEATS) + META_FEATS + 4 (Values per direction)
+const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 4;
 
 fn main() {
     let db_path = "../battlesnake_data.db";
@@ -148,13 +148,12 @@ fn main() {
     );
 }
 
-// --- CONFIG ---
-// Winners start strong and finish strongest.
 const WINNER_START: f32 = 0.5;
 const WINNER_END: f32 = 1.0;
-
-// Death is absolute.
 const DEATH_PENALTY: f32 = -1.0;
+// The value assigned to actions NOT taken.
+// 0.0 is safe. -0.1 would aggressively discourage deviation.
+const UNTAKEN_VAL: f32 = 0.0;
 
 fn process_game_buffer(
     turns: &[TrainingExample],
@@ -174,28 +173,30 @@ fn process_game_buffer(
         let next_frame = &window[1];
 
         for snake in &current_frame.snakes {
-            // Skip dead
+            // 1. Skip if dead
             if snake.death.is_some() {
                 continue;
             }
 
-            // Find next
+            // 2. Find in next frame
             if let Some(next_s) = next_frame.snakes.iter().find(|s| s.id == snake.id) {
                 let head_curr = snake.body[0];
                 let head_next = next_s.body[0];
 
-                // Static head check
+                // 3. Static head check (Safety against invalid data)
                 if head_curr.x == head_next.x && head_curr.y == head_next.y {
                     continue;
                 }
 
-                let move_idx = get_move_index(head_curr, head_next);
-                let target_value;
-                let should_write;
+                // 4. Calculate Logic
+                let taken_move_idx = get_move_index(head_curr, head_next) as usize;
+
+                // Initialize target vector with the baseline (e.g. 0.0)
+                let mut target_vector = [UNTAKEN_VAL; 4];
+                let mut should_write = false;
 
                 if snake.id == *winner_id {
-                    // --- WINNER: KEEP ALL ---
-                    // "Mimic this, it works."
+                    // --- WINNER ---
                     let current_turn = current_frame.turn as f32;
                     let total_turns = last_turn_index as f32;
 
@@ -205,24 +206,30 @@ fn process_game_buffer(
                         1.0
                     };
 
-                    // Ramp from 0.5 to 1.0
-                    target_value = WINNER_START + (ratio * (WINNER_END - WINNER_START));
-                    should_write = true;
-                } else {
-                    // --- LOSER: FILTER HARD ---
-                    if next_s.death.is_some() {
-                        // "DON'T DO THIS."
-                        target_value = DEATH_PENALTY;
+                    // Linear ramp: 0.5 -> 1.0
+                    let val = WINNER_START + (ratio * (WINNER_END - WINNER_START));
+
+                    // Assign to the specific move taken
+                    if taken_move_idx < 4 {
+                        target_vector[taken_move_idx] = val;
                         should_write = true;
-                    } else {
-                        // "Doing okay? I don't care. I only want excellence or death."
-                        target_value = 0.0;
-                        should_write = false;
                     }
+                } else {
+                    // --- LOSER ---
+                    if next_s.death.is_some() {
+                        // Immediate Death = -1.0
+                        if taken_move_idx < 4 {
+                            target_vector[taken_move_idx] = DEATH_PENALTY;
+                            should_write = true;
+                        }
+                    }
+                    // Note: We filter out surviving loser moves entirely
                 }
 
                 if should_write {
-                    write_record_to_buffer(current_frame, snake, buffer, move_idx, target_value);
+                    // Important: You need to update `write_record_to_buffer` signature
+                    // to accept `target_vector: [f32; 4]` instead of `action` and `value`.
+                    write_record_to_buffer(current_frame, snake, buffer, target_vector);
                     writer.write_all(bytemuck::cast_slice(buffer)).unwrap();
                     *count += 1;
                 }
@@ -235,8 +242,7 @@ fn write_record_to_buffer(
     item: &TrainingExample,
     focus_snake: &Snake,
     buffer: &mut [f32],
-    action_idx: f32,
-    target_value: f32,
+    target_vector: [f32; 4], // <--- CHANGED: Now takes the full vector
 ) {
     buffer.fill(0.0);
     let mut occupied = [false; SEQ_LEN];
@@ -254,14 +260,12 @@ fn write_record_to_buffer(
         };
 
     // --- Snake Processing ---
-    // We need to re-gather enemies relative to the *focus_snake* (the one we are generating value for)
     let mut enemies: Vec<&Snake> = item
         .snakes
         .iter()
         .filter(|s| s.id != focus_snake.id && s.death.is_none())
         .collect();
 
-    // Sort for consistency
     enemies.sort_by(|a, b| a.id.cmp(&b.id));
 
     let mut process_snake_body = |s: &Snake, offset: usize, buf: &mut [f32], mask: &mut [bool]| {
@@ -272,17 +276,11 @@ fn write_record_to_buffer(
         for (i, part) in s.body.iter().enumerate() {
             if i == 0 {
                 write_feature(part.x, part.y, offset + 0, 1.0, buf, mask);
-            }
-            // Head
-            else if i == 1 {
+            } else if i == 1 {
                 write_feature(part.x, part.y, offset + 1, 1.0, buf, mask);
-            }
-            // Neck
-            else if i == len - 1 {
+            } else if i == len - 1 {
                 write_feature(part.x, part.y, offset + 2, 1.0, buf, mask);
-            }
-            // Tail
-            else {
+            } else {
                 let grad = (len - i) as f32 / len as f32;
                 write_feature(part.x, part.y, offset + 3, grad, buf, mask);
             }
@@ -308,7 +306,7 @@ fn write_record_to_buffer(
         write_feature(hazard.x, hazard.y, 25, 1.0, buffer, &mut occupied);
     }
 
-    // 4. Empty Tiles (Is_Empty feature)
+    // 4. Empty Tiles
     for tile_idx in 0..SEQ_LEN {
         if !occupied[tile_idx] {
             let global_idx = (tile_idx * TILE_FEATS) + 26;
@@ -329,10 +327,13 @@ fn write_record_to_buffer(
     buffer[meta_start] = food_chance / 100.0;
     buffer[meta_start + 1] = min_food / area;
 
-    // --- Targets ---
-    // The previous code had label at +2. We now have Action + Value
-    buffer[meta_start + 2] = action_idx;
-    buffer[meta_start + 3] = target_value;
+    // --- Targets (The 4 Values) ---
+    // Make sure these indices match your Batcher logic!
+    // 0: Up, 1: Down, 2: Right, 3: Left
+    buffer[meta_start + 2] = target_vector[0];
+    buffer[meta_start + 3] = target_vector[1];
+    buffer[meta_start + 4] = target_vector[2];
+    buffer[meta_start + 5] = target_vector[3];
 }
 
 fn get_move_index(curr: Position, next: Position) -> f32 {
