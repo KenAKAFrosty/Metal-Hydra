@@ -254,6 +254,7 @@ fn process_game_buffer(
                     // --- 2. INJECT "COMMON SENSE" NEGATIVES ---
                     // Explicitly punish obvious death moves (OOB or  Non-Tail Body Collision)
                     let directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]; // Up, Down, Right, Left
+                    let my_len = snake.body.len();
 
                     for (i, (dx, dy)) in directions.iter().enumerate() {
                         // Don't overwrite the move we actually took!
@@ -276,11 +277,8 @@ fn process_game_buffer(
                         for other_snake in &current_frame.snakes {
                             // Only check bodies if they are long enough to be obstacles
                             if other_snake.body.len() > 1 {
-                                // Slice: Skip head (index 0) and Skip tail (last index)
-                                // Range: 1 .. len-1
-                                // Example: [H, B, B, T] -> checks [B, B]
-                                // Example: [H, T] -> checks nothing (len 2, range 1..1 is empty) - Correct!
-                                for part in &other_snake.body[1..other_snake.body.len() - 1] {
+                                // Slice: Skip tail (last index)
+                                for part in &other_snake.body[0..other_snake.body.len() - 1] {
                                     if part.x == nx && part.y == ny {
                                         is_collision = true;
                                         break;
@@ -293,6 +291,38 @@ fn process_game_buffer(
                         }
 
                         if is_collision {
+                            target_vector[i] = -1.0;
+                        }
+
+                        // --- Check C: The Kill Zone (Head-to-Head Risk) ---
+                        // "If I move to 'nx', and an Enemy Head is adjacent to 'nx',
+                        // and they are >= my size, I die."
+                        let mut is_kill_zone = false;
+                        for other_snake in &current_frame.snakes {
+                            if other_snake.id == snake.id {
+                                continue;
+                            } // Skip self
+                            if other_snake.death.is_some() {
+                                continue;
+                            } // Skip dead
+
+                            let other_head = other_snake.body[0];
+                            let other_len = other_snake.body.len();
+
+                            // Is Enemy Head adjacent to the target tile?
+                            let dist = (other_head.x - nx).abs() + (other_head.y - ny).abs();
+
+                            // dist == 1 means the enemy head is NEXT TO the target tile (Kill Zone)
+                            if dist == 1 {
+                                // DANGER: They are bigger or equal.
+                                if other_len >= my_len {
+                                    is_kill_zone = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if is_kill_zone {
                             target_vector[i] = -1.0;
                         }
                     }
