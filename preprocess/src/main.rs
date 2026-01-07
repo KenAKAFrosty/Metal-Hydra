@@ -148,11 +148,12 @@ fn main() {
     );
 }
 
-const START_VAL: f32 = 0.30;
+const LOSER_START_VAL: f32 = 0.10;
+const WINNER_START_VAL: f32 = 0.50;
 const WINNER_END_VAL: f32 = 1.0;
-const LOSER_END_VAL: f32 = -0.3;
+const LOSER_END_VAL: f32 = -0.5;
 const DEATH_PENALTY: f32 = -1.0;
-const UNTAKEN_SENTINEL: f32 = -5.0; // Far outside tanh range
+const UNTAKEN_VAL: f32 = 0.0;
 
 fn process_game_buffer(
     turns: &[TrainingExample],
@@ -203,7 +204,7 @@ fn process_game_buffer(
 
                 // Only process valid moves (0=Up, 1=Down, 2=Right, 3=Left)
                 if taken_move_idx < 4 {
-                    let mut target_vector = [UNTAKEN_SENTINEL; 4];
+                    let mut target_vector = [UNTAKEN_VAL; 4];
                     let calculated_value;
 
                     // --- VALUE LOGIC ---
@@ -216,7 +217,8 @@ fn process_game_buffer(
                         };
 
                         // Lerp: Start + (t * (End - Start))
-                        calculated_value = START_VAL + (ratio * (WINNER_END_VAL - START_VAL));
+                        calculated_value =
+                            WINNER_START_VAL + (ratio * (WINNER_END_VAL - WINNER_START_VAL));
                     } else {
                         // LOSER Check
                         if next_s.death.is_some() {
@@ -237,7 +239,8 @@ fn process_game_buffer(
                             // Lerp: Start -> -0.5 (Soft End)
                             // A snake that dies on turn 10 drops fast.
                             // A snake that dies on turn 100 drops slow.
-                            calculated_value = START_VAL + (ratio * (LOSER_END_VAL - START_VAL));
+                            calculated_value =
+                                LOSER_START_VAL + (ratio * (LOSER_END_VAL - LOSER_START_VAL));
                         }
                     }
 
