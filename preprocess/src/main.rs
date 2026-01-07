@@ -148,11 +148,11 @@ fn main() {
     );
 }
 
-const LOSER_START_VAL: f32 = 0.10;
+const LOSER_START_VAL: f32 = 0.0;
 const LOSER_END_VAL: f32 = -0.5;
 
-const WINNER_START_VAL: f32 = 0.50;
-const WINNER_END_VAL: f32 = 0.95;
+const WINNER_START_VAL: f32 = 0.20;
+const WINNER_END_VAL: f32 = 1.0;
 
 const DEATH_PENALTY: f32 = -1.0;
 const UNTAKEN_VAL: f32 = 0.0;
@@ -323,7 +323,9 @@ fn process_game_buffer(
                         }
 
                         if is_kill_zone {
-                            target_vector[i] = -1.0;
+                            target_vector[i] = -0.6;
+                            //because there's a *chance* the enemy doesn't actually move there, this should still be preferred
+                            //to a wall or body part which is guaranteed death. But should still give a strong negative signal
                         }
                     }
 
