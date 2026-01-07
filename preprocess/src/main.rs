@@ -149,9 +149,11 @@ fn main() {
 }
 
 const LOSER_START_VAL: f32 = 0.10;
+const LOSER_END_VAL: f32 = -0.5;
+
 const WINNER_START_VAL: f32 = 0.50;
 const WINNER_END_VAL: f32 = 1.0;
-const LOSER_END_VAL: f32 = -0.5;
+
 const DEATH_PENALTY: f32 = -1.0;
 const UNTAKEN_VAL: f32 = 0.0;
 
