@@ -148,12 +148,11 @@ fn main() {
     );
 }
 
-// --- CONSTANTS ---
-const START_VAL: f32 = 0.30; // "I have hope"
-const WINNER_END_VAL: f32 = 1.0; // "Victory!"
-const LOSER_END_VAL: f32 = -0.3; // "I am cornered" (Soft failure)
-const DEATH_PENALTY: f32 = -1.0; // "I died" (Hard failure)
-const UNTAKEN_VAL: f32 = 0.0; // "Unknown/Neutral"
+const START_VAL: f32 = 0.30;
+const WINNER_END_VAL: f32 = 1.0;
+const LOSER_END_VAL: f32 = -0.3;
+const DEATH_PENALTY: f32 = -1.0;
+const UNTAKEN_SENTINEL: f32 = -5.0; // Far outside tanh range
 
 fn process_game_buffer(
     turns: &[TrainingExample],
@@ -204,7 +203,7 @@ fn process_game_buffer(
 
                 // Only process valid moves (0=Up, 1=Down, 2=Right, 3=Left)
                 if taken_move_idx < 4 {
-                    let mut target_vector = [UNTAKEN_VAL; 4];
+                    let mut target_vector = [UNTAKEN_SENTINEL; 4];
                     let calculated_value;
 
                     // --- VALUE LOGIC ---

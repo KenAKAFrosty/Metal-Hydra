@@ -148,20 +148,32 @@ impl<B: Backend> Batcher<B, Vec<f32>, BattlesnakeBatch<B>> for BinaryBatcher<B> 
 impl<B: AutodiffBackend> TrainStep<BattlesnakeBatch<B>, RegressionOutput<B>> for BattleModel<B> {
     fn step(&self, batch: BattlesnakeBatch<B>) -> TrainOutput<RegressionOutput<B>> {
         // 1. Forward Pass
-        // Output Shape: [Batch, 4]
         let preds = self.forward(batch.tiles, batch.metadata);
+        let targets = batch.targets;
 
-        // 2. Loss Calculation
-        // Compare the full vectors.
-        // Taken action matches Target (e.g. 0.8).
-        // Untaken actions match 0.0.
-        let loss = burn::nn::loss::MseLoss::new().forward(
-            preds.clone(),
-            batch.targets.clone(),
-            burn::nn::loss::Reduction::Mean,
-        );
+        // 2. Create the Mask
+        // targets are [-5.0, 0.8, -5.0, -5.0]
+        // We want a mask [0.0, 1.0, 0.0, 0.0]
+        // Since valid range is -1.0 to 1.0, anything > -2.0 is real data.
+        let mask = targets.clone().greater_elem(-2.0).float();
 
-        // 3. Backward Pass
+        // 3. Calculate MSE manually
+        // Difference
+        let diff = preds.clone().sub(targets.clone());
+        // Square it
+        let squared_errors = diff.powf_scalar(2.0);
+
+        // 4. Apply Mask (Untaken moves become 0.0 error)
+        let masked_errors = squared_errors.mul(mask.clone());
+
+        // 5. Average (Sum of errors / Count of valid samples)
+        // We sum the mask to get the count of valid moves in the batch
+        let valid_count = mask.sum();
+
+        // Add epsilon to prevent divide by zero if a batch is empty (unlikely)
+        let loss = masked_errors.sum().div(valid_count.add_scalar(1e-8));
+
+        // 6. Backward
         let grads = loss.backward();
 
         TrainOutput::new(
@@ -170,31 +182,37 @@ impl<B: AutodiffBackend> TrainStep<BattlesnakeBatch<B>, RegressionOutput<B>> for
             RegressionOutput {
                 loss,
                 output: preds,
-                targets: batch.targets,
+                targets,
             },
         )
     }
 }
 
-// Don't forget to update ValidStep similarly!
 impl<B: Backend> ValidStep<BattlesnakeBatch<B>, RegressionOutput<B>> for BattleModel<B> {
     fn step(&self, batch: BattlesnakeBatch<B>) -> RegressionOutput<B> {
+        // 1. Forward
         let preds = self.forward(batch.tiles, batch.metadata);
+        let targets = batch.targets;
 
-        let loss = burn::nn::loss::MseLoss::new().forward(
-            preds.clone(),
-            batch.targets.clone(),
-            burn::nn::loss::Reduction::Mean,
-        );
+        // 2. Masking Logic (Same as TrainStep)
+        let mask = targets.clone().greater_elem(-2.0).float();
+
+        // 3. Manual MSE
+        let diff = preds.clone().sub(targets.clone());
+        let squared_errors = diff.powf_scalar(2.0);
+        let masked_errors = squared_errors.mul(mask.clone());
+
+        // Sum / Count
+        let valid_count = mask.sum();
+        let loss = masked_errors.sum().div(valid_count.add_scalar(1e-8));
 
         RegressionOutput {
             loss,
             output: preds,
-            targets: batch.targets,
+            targets,
         }
     }
 }
-// --- MAIN ---
 
 type MyBackend = Cuda;
 type MyAutodiffBackend = Autodiff<MyBackend>;
