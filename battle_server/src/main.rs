@@ -31,7 +31,7 @@ impl ModelKind {
         match self {
             ModelKind::OriginalCnn => "#D34516",
             ModelKind::HydraTransformer => "#D34516",
-            ModelKind::OxTransformer => "#30294A",
+            ModelKind::OxTransformer => "#422C44",
             
         }
     }
@@ -424,7 +424,7 @@ async fn handle_move(
             ModelKind::HydraTransformer =>  ["up", "right", "down", "left"],
             ModelKind::OxTransformer => ["up","down","right","left"]
         };
-        (moves[best_idx].to_string(), "🤖".to_string())
+        (moves[best_idx].to_string(), "🔥".to_string())
     })
     .await
     .expect("Blocking task failed");
@@ -496,7 +496,7 @@ async fn main() -> anyhow::Result<()> {
              
              // Load the record explicitly
              let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("model-2".into(), &device)
+                .load("model-1".into(), &device)
                 .expect("Failed to load transformer weights");
              
              // Init and load
