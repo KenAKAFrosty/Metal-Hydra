@@ -152,7 +152,7 @@ const LOSER_START_VAL: f32 = 0.10;
 const LOSER_END_VAL: f32 = -0.5;
 
 const WINNER_START_VAL: f32 = 0.50;
-const WINNER_END_VAL: f32 = 1.0;
+const WINNER_END_VAL: f32 = 0.95;
 
 const DEATH_PENALTY: f32 = -1.0;
 const UNTAKEN_VAL: f32 = 0.0;
@@ -169,6 +169,8 @@ fn process_game_buffer(
 
     let winner_id = &turns[0].winning_snake_id;
     let last_turn_index = turns.last().unwrap().turn;
+    let width = turns[0].game.width as i32;
+    let height = turns[0].game.height as i32;
 
     // 1. Pre-calculate Death Turns for all snakes
     //    This allows us to scale the "Loser Gradient" based on their specific lifespan.
@@ -248,6 +250,52 @@ fn process_game_buffer(
 
                     // Assign value to the specific move taken
                     target_vector[taken_move_idx] = calculated_value;
+
+                    // --- 2. INJECT "COMMON SENSE" NEGATIVES ---
+                    // Explicitly punish obvious death moves (OOB or  Non-Tail Body Collision)
+                    let directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]; // Up, Down, Right, Left
+
+                    for (i, (dx, dy)) in directions.iter().enumerate() {
+                        // Don't overwrite the move we actually took!
+                        if i == taken_move_idx {
+                            continue;
+                        }
+
+                        let nx = head_curr.x + dx;
+                        let ny = head_curr.y + dy;
+
+                        // Check A: Out of Bounds
+                        if nx < 0 || ny < 0 || nx >= width || ny >= height {
+                            target_vector[i] = -1.0;
+                            continue;
+                        }
+
+                        // Check B: Body Collision (Non-Head, Non-Tail)
+                        // Iterate all snakes on board
+                        let mut is_collision = false;
+                        for other_snake in &current_frame.snakes {
+                            // Only check bodies if they are long enough to be obstacles
+                            if other_snake.body.len() > 1 {
+                                // Slice: Skip head (index 0) and Skip tail (last index)
+                                // Range: 1 .. len-1
+                                // Example: [H, B, B, T] -> checks [B, B]
+                                // Example: [H, T] -> checks nothing (len 2, range 1..1 is empty) - Correct!
+                                for part in &other_snake.body[1..other_snake.body.len() - 1] {
+                                    if part.x == nx && part.y == ny {
+                                        is_collision = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if is_collision {
+                                break;
+                            }
+                        }
+
+                        if is_collision {
+                            target_vector[i] = -1.0;
+                        }
+                    }
 
                     // Write to binary buffer
                     write_record_to_buffer(current_frame, snake, buffer, target_vector);
