@@ -157,6 +157,8 @@ const WINNER_END_VAL: f32 = 1.0;
 const DEATH_PENALTY: f32 = -1.0;
 const UNTAKEN_VAL: f32 = 0.0;
 
+const TIME_EXPONENT: f32 = 3.0; // 1.0 linear, 2.0 quadratic, 3.0 cubic
+
 fn process_game_buffer(
     turns: &[TrainingExample],
     writer: &mut BufWriter<File>,
@@ -214,15 +216,16 @@ fn process_game_buffer(
                     // --- VALUE LOGIC ---
                     if snake.id == *winner_id {
                         // WINNER: Linearly ramp from 0.2 -> 1.0 over the WHOLE game
-                        let ratio = if last_turn_index > 0 {
+                        let raw_ratio = if last_turn_index > 0 {
                             current_frame.turn as f32 / last_turn_index as f32
                         } else {
-                            1.0
+                            WINNER_END_VAL
                         };
 
-                        // Lerp: Start + (t * (End - Start))
+                        let curve = raw_ratio.powf(TIME_EXPONENT);
+
                         calculated_value =
-                            WINNER_START_VAL + (ratio * (WINNER_END_VAL - WINNER_START_VAL));
+                            WINNER_START_VAL + (curve * (WINNER_END_VAL - WINNER_START_VAL));
                     } else {
                         // LOSER Check
                         if next_s.death.is_some() {
@@ -234,17 +237,16 @@ fn process_game_buffer(
                             let my_death_turn =
                                 *death_map.get(&snake.id).unwrap_or(&last_turn_index);
 
-                            let ratio = if my_death_turn > 0 {
+                            let raw_ratio = if my_death_turn > 0 {
                                 current_frame.turn as f32 / my_death_turn as f32
                             } else {
                                 1.0
                             };
 
-                            // Lerp: Start -> -0.5 (Soft End)
-                            // A snake that dies on turn 10 drops fast.
-                            // A snake that dies on turn 100 drops slow.
+                            let curve = raw_ratio.powf(TIME_EXPONENT);
+
                             calculated_value =
-                                LOSER_START_VAL + (ratio * (LOSER_END_VAL - LOSER_START_VAL));
+                                LOSER_START_VAL + (curve * (LOSER_END_VAL - LOSER_START_VAL));
                         }
                     }
 
