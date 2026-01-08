@@ -216,7 +216,7 @@ async fn main() {
         tile_features: 27,
         meta_features: 2,
         grid_size: 11,
-        dropout: 0.15,
+        dropout: 0.2,
         head_hidden_size: 128,
         num_queries: 8,
     };

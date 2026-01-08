@@ -51,7 +51,8 @@ pub struct BattleModel<B: Backend> {
     pooling_queries: Param<Tensor<B, 3>>,
 
     // --- NEW: MLP Head ---
-    head_dense: Linear<B>,
+    head_dense_1: Linear<B>,
+    head_dense_2: Linear<B>,
     dropout: Dropout,
     output: Linear<B>,
 
@@ -89,7 +90,13 @@ impl<B: Backend> BattleModel<B> {
         let pooled_size = config.num_queries * d_model;
         let head_input_size = pooled_size + d_model; // meta_projection outputs d_model
 
-        let head_dense = LinearConfig::new(head_input_size, config.head_hidden_size).init(device);
+        // Layer 1: [Input -> Hidden]
+        let head_dense_1 = LinearConfig::new(head_input_size, config.head_hidden_size).init(device);
+
+        // Layer 2: [Hidden -> Hidden] (This is the new addition)
+        // We keep the size constant here, giving the model more depth to process interactions
+        let head_dense_2 =
+            LinearConfig::new(config.head_hidden_size, config.head_hidden_size).init(device);
         let dropout = DropoutConfig::new(config.dropout).init();
         let output = LinearConfig::new(config.head_hidden_size, config.num_classes).init(device);
 
@@ -111,9 +118,10 @@ impl<B: Backend> BattleModel<B> {
             pos_projection,
             meta_projection,
             transformer,
-            pooling_queries, // New
-            head_dense,      // New
-            dropout,         // New
+            pooling_queries,
+            head_dense_1,
+            head_dense_2,
+            dropout,
             output,
             pos_grid,
         }
@@ -159,12 +167,17 @@ impl<B: Backend> BattleModel<B> {
         // [Batch, (K*D) + D]
         let mlp_input = Tensor::cat(vec![pooled_flat, meta_embed], 1);
 
-        // 6. MLP Head
-        let x = self.head_dense.forward(mlp_input);
-        let x = gelu(x); // Non-linearity allows complex logic
+        // 6. MLP Head (UPDATED)
+        // Layer 1
+        let x = self.head_dense_1.forward(mlp_input);
+        let x = gelu(x);
         let x = self.dropout.forward(x);
 
-        // CHANGED FROM ORIGINAL TRANSFORMER: From Classification to Regression
+        // Layer 2 (New)
+        let x = self.head_dense_2.forward(x);
+        let x = gelu(x); // Non-linearity for the new layer
+        let x = self.dropout.forward(x); // Apply dropout again
+
         let logits = self.output.forward(x);
 
         // We apply Tanh to squash the output between -1.0 and 1.0.

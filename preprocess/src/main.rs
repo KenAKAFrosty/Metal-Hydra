@@ -73,7 +73,7 @@ const META_FEATS: usize = 2;
 const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 4;
 
 fn main() {
-    const TARGET_RECORD_COUNT: u64 = 1_500_000;
+    // const TARGET_RECORD_COUNT: u64 = 1_500_000;
     let db_path = "../battlesnake_data.db";
     let out_path = "train_data_value.bin";
 
@@ -123,13 +123,13 @@ fn main() {
                 process_game_buffer(&game_buffer, &mut writer, &mut write_buffer, &mut count);
             }
 
-            if count >= TARGET_RECORD_COUNT {
-                println!(
-                    "\nTarget count of {} reached (Current: {}). Stopping.",
-                    TARGET_RECORD_COUNT, count
-                );
-                break;
-            }
+            // if count >= TARGET_RECORD_COUNT {
+            //     println!(
+            //         "\nTarget count of {} reached (Current: {}). Stopping.",
+            //         TARGET_RECORD_COUNT, count
+            //     );
+            //     break;
+            // }
             current_game_id = row_id;
             game_buffer.clear();
         }
