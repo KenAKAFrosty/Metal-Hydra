@@ -156,8 +156,8 @@ fn main() {
     );
 }
 
-const LOSER_START_VAL: f32 = -0.25;
-const LOSER_END_VAL: f32 = -1.0;
+const LOSER_START_VAL: f32 = 0.0;
+const LOSER_END_VAL: f32 = -0.25;
 
 const WINNER_START_VAL: f32 = 0.9;
 const WINNER_END_VAL: f32 = 1.0;
@@ -167,7 +167,7 @@ const FOOD_BONUS: f32 = 0.25;
 const DEATH_PENALTY: f32 = -1.0;
 const UNTAKEN_VAL: f32 = 0.0;
 
-const KILL_ZONE_VALUE: f32 = -0.75;
+const KILL_ZONE_VALUE: f32 = -0.5;
 
 const TIME_EXPONENT: f32 = 4.0; // 1.0 linear, 2.0 quadratic, 3.0 cubic
 
