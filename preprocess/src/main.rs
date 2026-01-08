@@ -73,6 +73,7 @@ const META_FEATS: usize = 2;
 const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 4;
 
 fn main() {
+    const TARGET_RECORD_COUNT: u64 = 750_000;
     let db_path = "../battlesnake_data.db";
     let out_path = "train_data_value.bin";
 
@@ -121,7 +122,14 @@ fn main() {
             if !game_buffer.is_empty() {
                 process_game_buffer(&game_buffer, &mut writer, &mut write_buffer, &mut count);
             }
-            // Reset
+
+            if count >= TARGET_RECORD_COUNT {
+                println!(
+                    "\nTarget count of {} reached (Current: {}). Stopping.",
+                    TARGET_RECORD_COUNT, count
+                );
+                break;
+            }
             current_game_id = row_id;
             game_buffer.clear();
         }
@@ -148,16 +156,18 @@ fn main() {
     );
 }
 
-const LOSER_START_VAL: f32 = -0.05;
-const LOSER_END_VAL: f32 = -0.75;
+const LOSER_START_VAL: f32 = -0.00;
+const LOSER_END_VAL: f32 = -0.00;
 
-const WINNER_START_VAL: f32 = 0.85;
+const WINNER_START_VAL: f32 = 0.5;
 const WINNER_END_VAL: f32 = 1.0;
+
+const FOOD_BONUS: f32 = 0.25;
 
 const DEATH_PENALTY: f32 = -1.0;
 const UNTAKEN_VAL: f32 = 0.0;
 
-const KILL_ZONE_VALUE: f32 = -0.6;
+const KILL_ZONE_VALUE: f32 = -0.5;
 
 const TIME_EXPONENT: f32 = 4.0; // 1.0 linear, 2.0 quadratic, 3.0 cubic
 
@@ -296,6 +306,18 @@ fn process_game_buffer(
 
                         if is_collision {
                             target_vector[i] = -1.0;
+                            continue;
+                        }
+
+                        let mut is_food = false;
+                        for food_item in &current_frame.food {
+                            if food_item.x == nx && food_item.y == ny {
+                                is_food = true;
+                                break;
+                            }
+                        }
+                        if is_food {
+                            target_vector[i] = FOOD_BONUS;
                         }
 
                         // --- Check C: The Kill Zone (Head-to-Head Risk) ---
