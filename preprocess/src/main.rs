@@ -156,13 +156,11 @@ fn main() {
     );
 }
 
-const LOSER_START_VAL: f32 = 0.0;
-const LOSER_END_VAL: f32 = 0.0;
+const LOSER_START_VAL: f32 = 0.3;
+const LOSER_END_VAL: f32 = 0.6;
 
-const WINNER_START_VAL: f32 = 0.9;
+const WINNER_START_VAL: f32 = 0.7;
 const WINNER_END_VAL: f32 = 1.0;
-
-const FOOD_BONUS: f32 = 0.25;
 
 const DEATH_PENALTY: f32 = -1.0;
 const UNTAKEN_VAL: f32 = 0.0;
