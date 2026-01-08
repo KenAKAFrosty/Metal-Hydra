@@ -157,7 +157,7 @@ fn main() {
 }
 
 const LOSER_START_VAL: f32 = 0.0;
-const LOSER_END_VAL: f32 = -0.25;
+const LOSER_END_VAL: f32 = 0.0;
 
 const WINNER_START_VAL: f32 = 0.9;
 const WINNER_END_VAL: f32 = 1.0;
@@ -309,16 +309,16 @@ fn process_game_buffer(
                             continue;
                         }
 
-                        let mut is_food = false;
-                        for food_item in &current_frame.food {
-                            if food_item.x == nx && food_item.y == ny {
-                                is_food = true;
-                                break;
-                            }
-                        }
-                        if is_food {
-                            target_vector[i] = FOOD_BONUS;
-                        }
+                        // let mut is_food = false;
+                        // for food_item in &current_frame.food {
+                        //     if food_item.x == nx && food_item.y == ny {
+                        //         is_food = true;
+                        //         break;
+                        //     }
+                        // }
+                        // if is_food {
+                        //     target_vector[i] = FOOD_BONUS;
+                        // }
 
                         // --- Check C: The Kill Zone (Head-to-Head Risk) ---
                         // "If I move to 'nx', and an Enemy Head is adjacent to 'nx',
