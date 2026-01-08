@@ -162,10 +162,10 @@ const LOSER_END_VAL: f32 = 0.2;
 const WINNER_START_VAL: f32 = 0.7;
 const WINNER_END_VAL: f32 = 1.0;
 
-const DEATH_PENALTY: f32 = -1.0;
+const DEATH_PENALTY: f32 = -0.2;
 const UNTAKEN_VAL: f32 = 0.0;
 
-const KILL_ZONE_VALUE: f32 = -0.5;
+const KILL_ZONE_VALUE: f32 = -0.1;
 
 const TIME_EXPONENT: f32 = 4.0; // 1.0 linear, 2.0 quadratic, 3.0 cubic
 

@@ -204,7 +204,7 @@ async fn main() {
     let device = CudaDevice::default();
 
     let batch_size = 528;
-    let learning_rate = 6e-4;
+    let learning_rate = 3e-4;
     let num_epochs = 100;
 
     let config = BattleModelConfig {
@@ -216,7 +216,7 @@ async fn main() {
         tile_features: 27,
         meta_features: 2,
         grid_size: 11,
-        dropout: 0.1,
+        dropout: 0.15,
         head_hidden_size: 128,
         num_queries: 8,
     };
@@ -227,8 +227,8 @@ async fn main() {
     println!("Num params in model: {}", model.num_params());
 
     let optimizer = AdamWConfig::new()
-        .with_weight_decay(1e-2)
-        .with_cautious_weight_decay(true)
+        .with_weight_decay(1e-4)
+        // .with_cautious_weight_decay(true)
         .init();
 
     let (dataset_train, dataset_valid) = MmapDataset::new("../preprocess/train_data_value.bin");
