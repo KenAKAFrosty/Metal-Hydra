@@ -496,7 +496,7 @@ async fn main() -> anyhow::Result<()> {
              
              // Load the record explicitly
              let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("model-7".into(), &device)
+                .load("model-12".into(), &device)
                 .expect("Failed to load transformer weights");
              
              // Init and load
