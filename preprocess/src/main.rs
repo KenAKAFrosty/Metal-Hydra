@@ -162,10 +162,10 @@ const LOSER_END_VAL: f32 = 0.2;
 const WINNER_START_VAL: f32 = 0.7;
 const WINNER_END_VAL: f32 = 1.0;
 
-const DEATH_PENALTY: f32 = -0.2;
+const DEATH_PENALTY: f32 = -0.5;
 const UNTAKEN_VAL: f32 = 0.0;
 
-const KILL_ZONE_VALUE: f32 = -0.1;
+const KILL_ZONE_VALUE: f32 = -0.35;
 
 const TIME_EXPONENT: f32 = 4.0; // 1.0 linear, 2.0 quadratic, 3.0 cubic
 
@@ -269,8 +269,10 @@ fn process_game_buffer(
                     let my_len = snake.body.len();
 
                     for (i, (dx, dy)) in directions.iter().enumerate() {
-                        // Don't overwrite the move we actually took!
-                        if i == taken_move_idx {
+                        // Don't overwrite the move we actually took, if a winner!
+                        // If a loser, it might mean the loser made an explicit bad choice like entering kill zone
+                        // These clear
+                        if i == taken_move_idx && snake.id == *winner_id {
                             continue;
                         }
 
