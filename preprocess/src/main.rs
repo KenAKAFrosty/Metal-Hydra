@@ -156,8 +156,8 @@ fn main() {
     );
 }
 
-const LOSER_START_VAL: f32 = 0.3;
-const LOSER_END_VAL: f32 = 0.6;
+const LOSER_START_VAL: f32 = 0.35;
+const LOSER_END_VAL: f32 = 0.2;
 
 const WINNER_START_VAL: f32 = 0.7;
 const WINNER_END_VAL: f32 = 1.0;
