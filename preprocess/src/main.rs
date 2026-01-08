@@ -73,7 +73,7 @@ const META_FEATS: usize = 2;
 const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 4;
 
 fn main() {
-    const TARGET_RECORD_COUNT: u64 = 750_000;
+    const TARGET_RECORD_COUNT: u64 = 1_500_000;
     let db_path = "../battlesnake_data.db";
     let out_path = "train_data_value.bin";
 
@@ -156,10 +156,10 @@ fn main() {
     );
 }
 
-const LOSER_START_VAL: f32 = -0.00;
-const LOSER_END_VAL: f32 = -0.00;
+const LOSER_START_VAL: f32 = -0.25;
+const LOSER_END_VAL: f32 = -1.0;
 
-const WINNER_START_VAL: f32 = 0.5;
+const WINNER_START_VAL: f32 = 0.9;
 const WINNER_END_VAL: f32 = 1.0;
 
 const FOOD_BONUS: f32 = 0.25;
@@ -167,7 +167,7 @@ const FOOD_BONUS: f32 = 0.25;
 const DEATH_PENALTY: f32 = -1.0;
 const UNTAKEN_VAL: f32 = 0.0;
 
-const KILL_ZONE_VALUE: f32 = -0.5;
+const KILL_ZONE_VALUE: f32 = -0.75;
 
 const TIME_EXPONENT: f32 = 4.0; // 1.0 linear, 2.0 quadratic, 3.0 cubic
 
