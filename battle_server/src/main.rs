@@ -12,6 +12,7 @@ use burn_ndarray::NdArray;
 
 use burn_ai_model::simple_cnn_opset16::Model as ModelOriginal;
 use burn_ai_model::transformer::{BattleModel, BattleModelConfig}; 
+use burn_ai_model::transformer_winprob::{BattleModel as WinProbBattleModel, BattleModelConfig as WinProbBattleModelConfig}; 
 
 // DEFINE THE BACKEND
 // We use NdArray for pure CPU execution.
@@ -61,7 +62,8 @@ struct AppState {
 
 enum Model { 
     Original(ModelOriginal<B>),
-    Transformer(BattleModel<B>)
+    Transformer(BattleModel<B>),
+    TransformerWinProb(WinProbBattleModel<B>)
 }
 
 #[derive(Deserialize)]
@@ -408,12 +410,29 @@ async fn handle_move(
                 );
                 m.forward(t_tensor, m_tensor)
             },
-            
+            (Model::TransformerWinProb(m), PreprocessedData::Transformer { tiles, meta }) => { 
+                                let t_shape = tiles.shape().to_vec();
+                let t_vec = tiles.into_raw_vec();
+                
+                let m_shape = meta.shape().to_vec();
+                let m_vec = meta.into_raw_vec();
+
+                let t_tensor = Tensor::<B, 3>::from_data(
+                    TensorData::new(t_vec, t_shape), 
+                    &device
+                );
+                let m_tensor = Tensor::<B, 2>::from_data(
+                    TensorData::new(m_vec, m_shape), 
+                    &device
+                );
+                m.forward(t_tensor, m_tensor)
+            },
             // CNN CASES
             (Model::Original(m), PreprocessedData::Cnn { board, meta }) => {
                 let (b, m_tens) = to_tensors(board, meta, &device);
                 m.forward(b, m_tens)
             },
+
             _ => panic!("Model / Data Mismatch!"),
         };
 
@@ -479,7 +498,7 @@ async fn main() -> anyhow::Result<()> {
              (Model::Transformer(model), ModelKind::HydraTransformer)
         },
         "value_model" => { 
-            let config = BattleModelConfig {
+            let config = WinProbBattleModelConfig {
                 d_model: 64,
                 d_ff: 256,
                 n_heads: 2,
@@ -495,14 +514,14 @@ async fn main() -> anyhow::Result<()> {
 
              
              // Load the record explicitly
-             let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
+             let record: burn_ai_model::transformer_winprob::BattleModelRecord<NdArray> = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
                 .load("model-1".into(), &device)
                 .expect("Failed to load transformer weights");
              
              // Init and load
-             let model = BattleModel::new(&config, &device).load_record(record);
+             let model = WinProbBattleModel::new(&config, &device).load_record(record);
              
-             (Model::Transformer(model), ModelKind::OxTransformer)
+             (Model::TransformerWinProb(model), ModelKind::OxTransformer)
         }
         _ => {
             println!("Unrecognized model choice, falling back to simple_cnn_opset16");
