@@ -499,23 +499,23 @@ async fn main() -> anyhow::Result<()> {
         },
         "value_model" => { 
             let config = WinProbBattleModelConfig {
-                d_model: 64,
-                d_ff: 256,
-                n_heads: 2,
+                d_model: 128,
+                d_ff: 512,
+                n_heads: 4,
                 n_layers: 4,
                 num_classes: 4,
                 tile_features: 27,
                 meta_features: 2,
                 grid_size: 11,
                 dropout: 0.1,
-                head_hidden_size: 128,
-                num_queries: 8,
+                head_hidden_size: 512,
+                num_queries: 32,
             };
 
              
              // Load the record explicitly
              let record: burn_ai_model::transformer_winprob::BattleModelRecord<NdArray> = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("model-9".into(), &device)
+                .load("model-1".into(), &device)
                 .expect("Failed to load transformer weights");
              
              // Init and load

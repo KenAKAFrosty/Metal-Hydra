@@ -208,17 +208,17 @@ async fn main() {
     let num_epochs = 100;
 
     let config = BattleModelConfig {
-        d_model: 64,
-        d_ff: 256,
-        n_heads: 2,
+        d_model: 128,
+        d_ff: 512,
+        n_heads: 4,
         n_layers: 4,
         num_classes: 4,
         tile_features: 27,
         meta_features: 2,
         grid_size: 11,
-        dropout: 0.2,
-        head_hidden_size: 128,
-        num_queries: 8,
+        dropout: 0.1,
+        head_hidden_size: 256,
+        num_queries: 32,
     };
 
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
