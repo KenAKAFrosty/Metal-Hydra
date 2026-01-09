@@ -515,7 +515,7 @@ async fn main() -> anyhow::Result<()> {
              
              // Load the record explicitly
              let record: burn_ai_model::transformer_winprob::BattleModelRecord<NdArray> = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("model-2".into(), &device)
+                .load("model-5".into(), &device)
                 .expect("Failed to load transformer weights");
              
              // Init and load
