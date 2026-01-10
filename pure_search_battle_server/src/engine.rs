@@ -743,8 +743,9 @@ impl Iterator for MoveEnumerator {
 #[derive(Debug, Clone, Serialize)]
 pub struct MoveScore {
     pub direction: Direction,
-    pub survivals: u64,
+    pub deaths: u64,
     pub wins: u64,
+    pub avg_length_diff: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -774,7 +775,7 @@ pub struct SearchResult {
 ///
 /// # Example
 /// ```
-/// let result = search(&request, Duration::from_millis(470));
+/// let result = search(&request, Duration::from_millis(450));
 /// println!("Move: {}", result.best_move);
 /// ```
 pub fn search(request: &GameMoveRequest, time_budget: Duration) -> SearchResult {
@@ -804,8 +805,10 @@ pub fn multiverse_search(
         };
     }
 
-    let mut survivals: [u64; 4] = [0; 4];
+    let mut deaths: [u64; 4] = [0; 4];
     let mut wins: [u64; 4] = [0; 4];
+    let mut length_diff_sum: [i64; 4] = [0; 4];
+    let mut leaf_count: [u64; 4] = [0; 4];
     let mut total_nodes: u64 = 0;
     let mut max_depth: u32 = 0;
 
@@ -834,7 +837,7 @@ pub fn multiverse_search(
                     break 'outer;
                 }
 
-                let (branch_survivals, branch_wins, branch_depth) = explore_branch(
+                let (d, w, l, lc, branch_depth) = explore_branch(
                     &next_state,
                     my_snake,
                     current_depth - 1,
@@ -842,8 +845,10 @@ pub fn multiverse_search(
                     &mut total_nodes,
                 );
 
-                survivals[my_dir as usize] += branch_survivals;
-                wins[my_dir as usize] += branch_wins;
+                deaths[my_dir as usize] += d;
+                wins[my_dir as usize] += w;
+                length_diff_sum[my_dir as usize] += l;
+                leaf_count[my_dir as usize] += lc;
                 max_depth = max_depth.max(branch_depth + 1);
 
                 if Instant::now() >= deadline {
@@ -860,10 +865,23 @@ pub fn multiverse_search(
 
     // Find best move
     let mut best_dir = my_moves[0];
-    let mut best_score = 0i64;
+    let mut best_score = i64::MIN;
 
     for &dir in my_moves.iter() {
-        let score = survivals[dir as usize] as i64 + 10 * wins[dir as usize] as i64;
+        let d = deaths[dir as usize];
+        let w = wins[dir as usize];
+        let lc = leaf_count[dir as usize];
+
+        // Average length advantage (multiplied by 1000 to preserve precision)
+        let avg_length_diff = if lc > 0 {
+            (length_diff_sum[dir as usize] * 1000) / lc as i64
+        } else {
+            0
+        };
+
+        // Score: minimize deaths, maximize wins, then length advantage as tiebreaker
+        let score = -(d as i64 * 10_000) + (w as i64 * 1_000) + avg_length_diff;
+
         if score > best_score {
             best_score = score;
             best_dir = dir;
@@ -880,10 +898,18 @@ pub fn multiverse_search(
 
     let move_scores: Vec<MoveScore> = my_moves
         .iter()
-        .map(|&dir| MoveScore {
-            direction: dir,
-            survivals: survivals[dir as usize],
-            wins: wins[dir as usize],
+        .map(|&dir| {
+            let lc = leaf_count[dir as usize];
+            MoveScore {
+                direction: dir,
+                deaths: deaths[dir as usize],
+                wins: wins[dir as usize],
+                avg_length_diff: if lc > 0 {
+                    length_diff_sum[dir as usize] as f64 / lc as f64
+                } else {
+                    0.0
+                },
+            }
         })
         .collect();
 
@@ -897,46 +923,63 @@ pub fn multiverse_search(
     }
 }
 
+/// Returns (deaths, wins, length_diff_sum, leaf_count, max_depth)
+/// length_diff_sum = sum of (my_length - max_enemy_length) at each leaf
 fn explore_branch(
     state: &GameState,
     my_snake: usize,
     depth: u32,
     deadline: Instant,
     total_nodes: &mut u64,
-) -> (u64, u64, u32) {
+) -> (u64, u64, i64, u64, u32) {
     *total_nodes += 1;
 
     if !state.is_alive(my_snake) {
-        return (0, 0, 0);
+        return (1, 0, 0, 1, 0); // 1 death, 0 wins, no length diff (we're dead), 1 leaf
     }
 
     if state.alive_count() == 1 && state.is_alive(my_snake) {
-        return (1, 1, 0);
+        // We won - count our length advantage as maximum (no enemies left)
+        return (0, 1, state.length[my_snake] as i64, 1, 0);
     }
 
     if depth == 0 || Instant::now() >= deadline {
-        return (1, 0, 0);
+        // Leaf node: calculate length differential
+        let my_len = state.length[my_snake] as i64;
+        let max_enemy_len = (0..state.snake_count as usize)
+            .filter(|&i| i != my_snake && state.is_alive(i))
+            .map(|i| state.length[i] as i64)
+            .max()
+            .unwrap_or(0);
+
+        return (0, 0, my_len - max_enemy_len, 1, 0);
     }
 
-    let mut survivals = 0u64;
+    let mut deaths = 0u64;
     let mut wins = 0u64;
+    let mut length_diff_sum = 0i64;
+    let mut leaf_count = 0u64;
     let mut max_depth = 0u32;
 
     for moves in MoveEnumerator::new(state) {
         let mut next_state = *state;
         next_state.apply_moves(&moves);
 
-        let (s, w, d) = explore_branch(&next_state, my_snake, depth - 1, deadline, total_nodes);
-        survivals += s;
+        let (d, w, l, lc, depth_reached) =
+            explore_branch(&next_state, my_snake, depth - 1, deadline, total_nodes);
+
+        deaths += d;
         wins += w;
-        max_depth = max_depth.max(d + 1);
+        length_diff_sum += l;
+        leaf_count += lc;
+        max_depth = max_depth.max(depth_reached + 1);
 
         if *total_nodes % 50000 == 0 && Instant::now() >= deadline {
             break;
         }
     }
 
-    (survivals, wins, max_depth)
+    (deaths, wins, length_diff_sum, leaf_count, max_depth)
 }
 
 struct EnemyMoveEnumerator {

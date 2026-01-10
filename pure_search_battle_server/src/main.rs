@@ -21,17 +21,18 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn handle_move(Json(req): Json<GameMoveRequest>) -> Json<MoveResponse> {
-    let result = search(&req, Duration::from_millis(450));
+    let result = search(&req, Duration::from_millis(470));
     println!("TURN {} -------", req.turn);
     println!("Best move: {}\n", result.best_move);
 
-    println!("Move scores (survivals, wins):");
+    println!("Move scores (deaths, wins, length diff):");
     for score in &result.move_scores {
         println!(
-            "  {:>5}: {:>10} survivals, {:>6} wins",
+            "  {:>5}: {:>8} deaths, {:>6} wins, {:>+6.2} avg length diff",
             score.direction.as_str(),
-            score.survivals,
-            score.wins
+            score.deaths,
+            score.wins,
+            score.avg_length_diff
         );
     }
 
