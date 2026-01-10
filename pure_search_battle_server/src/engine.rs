@@ -252,6 +252,54 @@ impl GameState {
         false
     }
 
+    /// Get safe moves - excludes squares where larger/equal snakes can contest
+    pub fn get_safe_moves(&self, snake_id: usize) -> ArrayVec<Direction, 4> {
+        let mut moves = ArrayVec::new();
+
+        if !self.is_alive(snake_id) {
+            return moves;
+        }
+
+        let head = self.heads[snake_id];
+        let neck = self.necks[snake_id];
+        let my_length = self.length[snake_id];
+
+        'outer: for dir in Direction::all() {
+            if let Some(new_pos) = move_pos(head, dir) {
+                if new_pos == neck {
+                    continue;
+                }
+
+                // Check if any equal-or-larger enemy can also reach this cell
+                for i in 0..self.snake_count as usize {
+                    if i == snake_id || !self.is_alive(i) {
+                        continue;
+                    }
+
+                    // Only worry about snakes that would kill us in head-to-head
+                    if self.length[i] >= my_length {
+                        let enemy_head = self.heads[i];
+                        // Check all 4 directions from enemy head
+                        for enemy_dir in Direction::all() {
+                            if move_pos(enemy_head, enemy_dir) == Some(new_pos) {
+                                continue 'outer; // Contested! Skip this move
+                            }
+                        }
+                    }
+                }
+
+                moves.push(dir);
+            }
+        }
+
+        // If ALL moves are contested, fall back to regular moves (take the gamble)
+        if moves.is_empty() {
+            return self.get_all_moves(snake_id);
+        }
+
+        moves
+    }
+
     /// Get all possible moves (excluding neck reversal - guaranteed death)
     pub fn get_all_moves(&self, snake_id: usize) -> ArrayVec<Direction, 4> {
         let mut moves = ArrayVec::new();
@@ -342,6 +390,10 @@ impl GameState {
             }
 
             let new_head = new_heads[i];
+            if new_head >= BOARD_CELLS as u8 {
+                eliminations[i] = true;
+                continue;
+            }
             let cell = self.grid[new_head as usize];
 
             if cell != EMPTY && cell != FOOD {
@@ -714,7 +766,7 @@ pub struct SearchResult {
 ///
 /// # Example
 /// ```
-/// let result = search(&request, Duration::from_millis(450));
+/// let result = search(&request, Duration::from_millis(470));
 /// println!("Move: {}", result.best_move);
 /// ```
 pub fn search(request: &GameMoveRequest, time_budget: Duration) -> SearchResult {
@@ -731,7 +783,7 @@ pub fn multiverse_search(
     let start = Instant::now();
     let deadline = start + time_budget;
 
-    let my_moves = state.get_all_moves(my_snake);
+    let my_moves = state.get_safe_moves(my_snake);
 
     if my_moves.is_empty() {
         return SearchResult {

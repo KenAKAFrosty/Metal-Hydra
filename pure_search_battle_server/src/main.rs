@@ -40,7 +40,7 @@ async fn handle_move(Json(req): Json<GameMoveRequest>) -> Json<MoveResponse> {
     println!("  Max depth reached: {}", result.max_depth);
     println!("  Time elapsed: {}ms", result.elapsed_ms);
     println!("  Throughput: {:.2}M nodes/sec", result.throughput_mnps);
-    println!("------- END {}", req.turn);
+    println!("------- END {}\n\n", req.turn);
 
     Json(MoveResponse {
         r#move: result.best_move.as_str().to_string(),
