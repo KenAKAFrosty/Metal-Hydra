@@ -782,6 +782,8 @@ pub fn search(request: &GameMoveRequest, time_budget: Duration) -> SearchResult 
     multiverse_search(&state, my_snake, time_budget)
 }
 
+use rayon::prelude::*;
+
 pub fn multiverse_search(
     state: &GameState,
     my_snake: usize,
@@ -803,79 +805,93 @@ pub fn multiverse_search(
         };
     }
 
-    let mut length_diff_sum: [i64; 4] = [0; 4];
-    let mut leaf_count: [u64; 4] = [0; 4];
-    let mut total_nodes: u64 = 0;
-    let mut max_depth: u32 = 0;
+    // Collect moves into a Vec for parallel iteration
+    let moves_vec: Vec<Direction> = my_moves.iter().copied().collect();
 
-    let mut current_depth = 1u32;
+    // Parallel exploration of each direction
+    let results: Vec<_> = moves_vec
+        .par_iter()
+        .map(|&my_dir| {
+            let mut length_diff_sum = 0i64;
+            let mut leaf_count = 0u64;
+            let mut local_nodes = 0u64;
+            let mut max_depth = 0u32;
+            let mut current_depth = 1u32;
 
-    'outer: loop {
-        for &my_dir in my_moves.iter() {
-            for enemy_moves in EnemyMoveEnumerator::new(state, my_snake) {
-                let mut turn_moves = TurnMoves::new();
-                turn_moves.set(my_snake, my_dir);
+            'depth: loop {
+                for enemy_moves in EnemyMoveEnumerator::new(state, my_snake) {
+                    if Instant::now() >= deadline {
+                        break 'depth;
+                    }
 
-                let mut enemy_idx = 0;
-                for i in 0..state.snake_count as usize {
-                    if i != my_snake && state.is_alive(i) {
-                        if enemy_idx < enemy_moves.len() {
-                            turn_moves.set(i, enemy_moves[enemy_idx]);
-                            enemy_idx += 1;
+                    let mut turn_moves = TurnMoves::new();
+                    turn_moves.set(my_snake, my_dir);
+
+                    let mut enemy_idx = 0;
+                    for i in 0..state.snake_count as usize {
+                        if i != my_snake && state.is_alive(i) {
+                            if enemy_idx < enemy_moves.len() {
+                                turn_moves.set(i, enemy_moves[enemy_idx]);
+                                enemy_idx += 1;
+                            }
                         }
                     }
+
+                    let mut next_state = *state;
+                    next_state.apply_moves(&turn_moves);
+
+                    let (l, lc, d) = explore_branch(
+                        &next_state,
+                        my_snake,
+                        current_depth - 1,
+                        deadline,
+                        &mut local_nodes,
+                    );
+
+                    length_diff_sum += l;
+                    leaf_count += lc;
+                    max_depth = max_depth.max(d + 1);
                 }
 
-                let mut next_state = *state;
-                next_state.apply_moves(&turn_moves);
-
-                if total_nodes % 10000 == 0 && Instant::now() >= deadline {
-                    break 'outer;
-                }
-
-                let (l, lc, branch_depth) = explore_branch(
-                    &next_state,
-                    my_snake,
-                    current_depth - 1,
-                    deadline,
-                    &mut total_nodes,
-                );
-
-                length_diff_sum[my_dir as usize] += l;
-                leaf_count[my_dir as usize] += lc;
-                max_depth = max_depth.max(branch_depth + 1);
-
-                if Instant::now() >= deadline {
-                    break 'outer;
+                current_depth += 1;
+                if current_depth > 100 {
+                    break;
                 }
             }
-        }
 
-        current_depth += 1;
-        if current_depth > 100 {
-            break;
-        }
-    }
+            (my_dir, leaf_count, length_diff_sum, max_depth, local_nodes)
+        })
+        .collect();
 
-    // Find best move
-    // Primary: leaf count (more futures = better)
-    // Tiebreaker: avg length diff
+    // Aggregate results
     let mut best_dir = my_moves[0];
     let mut best_leaves = 0u64;
     let mut best_avg_diff = f64::NEG_INFINITY;
+    let mut total_nodes = 0u64;
+    let mut overall_max_depth = 0u32;
 
-    for &dir in my_moves.iter() {
-        let lc = leaf_count[dir as usize];
-        let avg_diff = if lc > 0 {
-            length_diff_sum[dir as usize] as f64 / lc as f64
+    let mut move_scores = Vec::new();
+
+    for (dir, leaves, length_sum, depth, nodes) in &results {
+        total_nodes += nodes;
+        overall_max_depth = overall_max_depth.max(*depth);
+
+        let avg_diff = if *leaves > 0 {
+            *length_sum as f64 / *leaves as f64
         } else {
             f64::NEG_INFINITY
         };
 
-        if lc > best_leaves || (lc == best_leaves && avg_diff > best_avg_diff) {
-            best_leaves = lc;
+        move_scores.push(MoveScore {
+            direction: *dir,
+            leaf_count: *leaves,
+            avg_diff,
+        });
+
+        if *leaves > best_leaves || (*leaves == best_leaves && avg_diff > best_avg_diff) {
+            best_leaves = *leaves;
             best_avg_diff = avg_diff;
-            best_dir = dir;
+            best_dir = *dir;
         }
     }
 
@@ -887,27 +903,11 @@ pub fn multiverse_search(
         0.0
     };
 
-    let move_scores: Vec<MoveScore> = my_moves
-        .iter()
-        .map(|&dir| {
-            let lc = leaf_count[dir as usize];
-            MoveScore {
-                direction: dir,
-                leaf_count: lc,
-                avg_diff: if lc > 0 {
-                    length_diff_sum[dir as usize] as f64 / lc as f64
-                } else {
-                    f64::NEG_INFINITY
-                },
-            }
-        })
-        .collect();
-
     SearchResult {
         best_move: best_dir,
         move_scores,
         total_nodes,
-        max_depth,
+        max_depth: overall_max_depth,
         elapsed_ms,
         throughput_mnps: throughput,
     }
