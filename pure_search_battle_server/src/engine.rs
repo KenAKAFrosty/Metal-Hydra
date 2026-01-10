@@ -857,16 +857,15 @@ pub fn multiverse_search(
         }
     }
 
-    // Find best move - just highest average length diff!
     let mut best_dir = my_moves[0];
-    let mut best_score = i64::MIN;
+    let mut best_score = f64::NEG_INFINITY;
 
     for &dir in my_moves.iter() {
         let lc = leaf_count[dir as usize];
         let score = if lc > 0 {
-            length_diff_sum[dir as usize] / lc as i64
+            length_diff_sum[dir as usize] as f64 / lc as f64
         } else {
-            i64::MIN
+            f64::NEG_INFINITY
         };
 
         if score > best_score {
