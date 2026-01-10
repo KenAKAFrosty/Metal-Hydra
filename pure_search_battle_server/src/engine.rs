@@ -810,6 +810,7 @@ pub fn multiverse_search(
     let mut total_nodes: u64 = 0;
 
     let mut current_depth = 1u32;
+    let mut last_completed_depth = 0u32;
 
     'outer: loop {
         for &my_dir in my_moves.iter() {
@@ -853,10 +854,18 @@ pub fn multiverse_search(
             }
         }
 
+        // Only reaches here if we completed ALL directions at this depth
+        last_completed_depth = current_depth;
+
         current_depth += 1;
         if current_depth > 100 {
             break;
         }
+    }
+
+    // Cap depths to the last fairly-completed depth for comparison
+    for &dir in my_moves.iter() {
+        max_depth_per_dir[dir as usize] = max_depth_per_dir[dir as usize].min(last_completed_depth);
     }
 
     // Find best move
@@ -918,6 +927,7 @@ pub fn multiverse_search(
         throughput_mnps: throughput,
     }
 }
+
 fn explore_branch(
     state: &GameState,
     my_snake: usize,
