@@ -921,7 +921,7 @@ fn explore_branch(
 
     if !state.is_alive(my_snake) {
         // Dead = catastrophically negative
-        return (-50, 1, 0);
+        return (0, 1, 0);
     }
 
     if state.alive_count() == 1 {
