@@ -25,14 +25,13 @@ async fn handle_move(Json(req): Json<GameMoveRequest>) -> Json<MoveResponse> {
     println!("TURN {} -------", req.turn);
     println!("Best move: {}\n", result.best_move);
 
-    println!("Move scores (deaths, wins, length diff):");
+    println!("Move scores:");
     for score in &result.move_scores {
         println!(
-            "  {:>5}: {:>8} deaths, {:>6} wins, {:>+6.2} avg length diff",
+            "  {:>5}: {:>+8.3} avg score ({} leaves)",
             score.direction.as_str(),
-            score.deaths,
-            score.wins,
-            score.avg_length_diff
+            score.score,
+            score.leaf_count
         );
     }
 
