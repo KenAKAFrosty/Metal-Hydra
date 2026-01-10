@@ -459,6 +459,10 @@ impl GameState {
 
             if !ate_food[i] {
                 let old_tail = self.tails[i];
+                if old_tail >= BOARD_CELLS as u8 {
+                    eliminations[i] = true;
+                    continue;
+                }
                 let new_tail = self.grid[old_tail as usize];
                 self.grid[old_tail as usize] = EMPTY;
                 self.tails[i] = new_tail;
@@ -473,6 +477,10 @@ impl GameState {
 
             let old_head = self.heads[i];
             let new_head = new_heads[i];
+            if old_head >= BOARD_CELLS as u8 || new_head >= BOARD_CELLS as u8 {
+                eliminations[i] = true;
+                continue;
+            }
 
             self.grid[old_head as usize] = new_head;
             self.grid[new_head as usize] = SENTINEL;
