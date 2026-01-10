@@ -515,7 +515,7 @@ async fn main() -> anyhow::Result<()> {
              
              // Load the record explicitly
              let record: burn_ai_model::transformer_winprob::BattleModelRecord<NdArray> = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("transformer_value".into(), &device)
+                .load("model-1".into(), &device)
                 .expect("Failed to load transformer weights");
             //not sure what epoch that landed on but it was more than the 21 in there. I *think* still in the 20s though, like maybe 26.
             //also no guarantee it was actually improved, though loss seemed to be steadily dropping just fine, so probably ok.

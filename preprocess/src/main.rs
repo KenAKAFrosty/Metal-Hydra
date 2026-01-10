@@ -156,10 +156,11 @@ fn main() {
     );
 }
 
-const LOSER_START_VAL: f32 = 0.35;
-const LOSER_END_VAL: f32 = 0.2;
+const LOSER_START_VAL_MIN: f32 = 0.15;
+const LOSER_START_VAL_MAX: f32 = 0.25;
+const LOSER_END_VAL: f32 = 0.1;
 
-const WINNER_START_VAL: f32 = 0.7;
+const WINNER_START_VAL: f32 = 0.8;
 const WINNER_END_VAL: f32 = 1.0;
 
 const DEATH_PENALTY: f32 = -0.5;
@@ -194,6 +195,37 @@ fn process_game_buffer(
                 death_map.insert(snake.id.clone(), d.turn);
             }
         }
+    }
+
+    let mut loser_start_values: HashMap<String, f32> = HashMap::new();
+
+    // Collect all losers and their death turns
+    let mut sorted_losers: Vec<(&String, u32)> = death_map
+        .iter()
+        .filter(|(id, _)| *id != winner_id)
+        .map(|(id, &turn)| (id, turn))
+        .collect();
+
+    // Sort by turn ascending (First to die -> Last to die)
+    sorted_losers.sort_by_key(|&(_, turn)| turn);
+
+    let loser_count = sorted_losers.len();
+
+    for (rank, (id, _)) in sorted_losers.iter().enumerate() {
+        // rank 0 = died first (worst)
+        // rank N = died last (best)
+
+        let placement_factor = if loser_count > 1 {
+            rank as f32 / (loser_count - 1) as f32
+        } else {
+            // If it's 1v1, there is only 1 loser. We give them the MAX credit
+            1.0
+        };
+
+        // Interpolate between MIN and MAX
+        let start_val =
+            LOSER_START_VAL_MIN + (placement_factor * (LOSER_START_VAL_MAX - LOSER_START_VAL_MIN));
+        loser_start_values.insert(id.to_string(), start_val);
     }
 
     for window in turns.windows(2) {
@@ -237,13 +269,15 @@ fn process_game_buffer(
                         calculated_value =
                             WINNER_START_VAL + (curve * (WINNER_END_VAL - WINNER_START_VAL));
                     } else {
-                        // LOSER Check
+                        // LOSER LOGIC
                         if next_s.death.is_some() {
-                            // THE CLIFF: Immediate tactical failure (Next frame is death)
                             calculated_value = DEATH_PENALTY;
                         } else {
-                            // THE SLIDE: Strategic degradation
-                            // Calculate ratio based on THIS snake's lifespan
+                            // Lookup the specific start value for THIS loser based on rank
+                            let my_start_val = *loser_start_values
+                                .get(&snake.id)
+                                .unwrap_or(&LOSER_START_VAL_MIN);
+
                             let my_death_turn =
                                 *death_map.get(&snake.id).unwrap_or(&last_turn_index);
 
@@ -255,8 +289,9 @@ fn process_game_buffer(
 
                             let curve = raw_ratio.powf(TIME_EXPONENT);
 
+                            // Decay from THEIR specific start value down to fixed END_VAL
                             calculated_value =
-                                LOSER_START_VAL + (curve * (LOSER_END_VAL - LOSER_START_VAL));
+                                my_start_val + (curve * (LOSER_END_VAL - my_start_val));
                         }
                     }
 
@@ -272,20 +307,29 @@ fn process_game_buffer(
                         // Don't overwrite the move we actually took, if a winner!
                         // If a loser, it might mean the loser made an explicit bad choice like entering kill zone
                         // These clear
-                        if i == taken_move_idx && snake.id == *winner_id {
-                            continue;
-                        }
 
                         let nx = head_curr.x + dx;
                         let ny = head_curr.y + dy;
 
+                        let mut is_food = false;
+                        for food_item in &current_frame.food {
+                            if food_item.x == nx && food_item.y == ny {
+                                is_food = true;
+                                break;
+                            }
+                        }
+                        // if is_food {
+                        //     target_vector[i] = FOOD_BONUS;
+                        // }
+                        if snake.health <= 1 && !is_food {
+                            target_vector[i] = -1.0;
+                            continue;
+                        }
                         // Check A: Out of Bounds
                         if nx < 0 || ny < 0 || nx >= width || ny >= height {
                             target_vector[i] = -1.0;
                             continue;
                         }
-
-                        // Check B: Body Collision (Non-Head, Non-Tail)
                         // Iterate all snakes on board
                         let mut is_collision = false;
                         for other_snake in &current_frame.snakes {
@@ -309,17 +353,12 @@ fn process_game_buffer(
                             continue;
                         }
 
-                        // let mut is_food = false;
-                        // for food_item in &current_frame.food {
-                        //     if food_item.x == nx && food_item.y == ny {
-                        //         is_food = true;
-                        //         break;
-                        //     }
-                        // }
-                        // if is_food {
-                        //     target_vector[i] = FOOD_BONUS;
-                        // }
-
+                        if i == taken_move_idx && snake.id == *winner_id {
+                            //the following kill zone check is a helper for awareness when otherwise unopinionated, but
+                            //should be overruled if the winner that round still chose that tile. Likely it was a good meta choice,
+                            //or was a best-of-bad-situation condition, which we'd want to learn from instead of our hard rule.
+                            continue;
+                        }
                         // --- Check C: The Kill Zone (Head-to-Head Risk) ---
                         // "If I move to 'nx', and an Enemy Head is adjacent to 'nx',
                         // and they are >= my size, I die."
