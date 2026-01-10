@@ -5,6 +5,7 @@ members = [
     "burn_ai_model",
     "training",
     "preprocess",
+    "pure_search_battle_server",
 ]
 resolver = "3"
 
