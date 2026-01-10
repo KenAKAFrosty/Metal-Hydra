@@ -743,8 +743,9 @@ impl Iterator for MoveEnumerator {
 #[derive(Debug, Clone, Serialize)]
 pub struct MoveScore {
     pub direction: Direction,
-    pub score: f64,      // The one metric: avg length diff
-    pub leaf_count: u64, // How many futures we explored
+    pub max_depth: u32,
+    pub avg_diff: f64,
+    pub leaf_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -805,8 +806,8 @@ pub fn multiverse_search(
 
     let mut length_diff_sum: [i64; 4] = [0; 4];
     let mut leaf_count: [u64; 4] = [0; 4];
+    let mut max_depth_per_dir: [u32; 4] = [0; 4];
     let mut total_nodes: u64 = 0;
-    let mut max_depth: u32 = 0;
 
     let mut current_depth = 1u32;
 
@@ -843,7 +844,8 @@ pub fn multiverse_search(
 
                 length_diff_sum[my_dir as usize] += l;
                 leaf_count[my_dir as usize] += lc;
-                max_depth = max_depth.max(branch_depth + 1);
+                max_depth_per_dir[my_dir as usize] =
+                    max_depth_per_dir[my_dir as usize].max(branch_depth + 1);
 
                 if Instant::now() >= deadline {
                     break 'outer;
@@ -857,19 +859,25 @@ pub fn multiverse_search(
         }
     }
 
+    // Find best move
+    // Primary: max depth (survival horizon)
+    // Tiebreaker: avg length diff
     let mut best_dir = my_moves[0];
-    let mut best_score = f64::NEG_INFINITY;
+    let mut best_depth = 0u32;
+    let mut best_avg_diff = f64::NEG_INFINITY;
 
     for &dir in my_moves.iter() {
+        let depth = max_depth_per_dir[dir as usize];
         let lc = leaf_count[dir as usize];
-        let score = if lc > 0 {
+        let avg_diff = if lc > 0 {
             length_diff_sum[dir as usize] as f64 / lc as f64
         } else {
             f64::NEG_INFINITY
         };
 
-        if score > best_score {
-            best_score = score;
+        if depth > best_depth || (depth == best_depth && avg_diff > best_avg_diff) {
+            best_depth = depth;
+            best_avg_diff = avg_diff;
             best_dir = dir;
         }
     }
@@ -882,13 +890,16 @@ pub fn multiverse_search(
         0.0
     };
 
+    let overall_max_depth = max_depth_per_dir.iter().copied().max().unwrap_or(0);
+
     let move_scores: Vec<MoveScore> = my_moves
         .iter()
         .map(|&dir| {
             let lc = leaf_count[dir as usize];
             MoveScore {
                 direction: dir,
-                score: if lc > 0 {
+                max_depth: max_depth_per_dir[dir as usize],
+                avg_diff: if lc > 0 {
                     length_diff_sum[dir as usize] as f64 / lc as f64
                 } else {
                     f64::NEG_INFINITY
@@ -902,12 +913,11 @@ pub fn multiverse_search(
         best_move: best_dir,
         move_scores,
         total_nodes,
-        max_depth,
+        max_depth: overall_max_depth,
         elapsed_ms,
         throughput_mnps: throughput,
     }
 }
-
 fn explore_branch(
     state: &GameState,
     my_snake: usize,

@@ -28,13 +28,13 @@ async fn handle_move(Json(req): Json<GameMoveRequest>) -> Json<MoveResponse> {
     println!("Move scores:");
     for score in &result.move_scores {
         println!(
-            "  {:>5}: {:>+8.3} avg score ({} leaves)",
+            "  {:>5}: depth {:>2}, {:>+7.3} avg diff, {:>8} leaves",
             score.direction.as_str(),
-            score.score,
+            score.max_depth,
+            score.avg_diff,
             score.leaf_count
         );
     }
-
     println!("\nSearch statistics:");
     println!("  Total nodes explored: {}", result.total_nodes);
     println!("  Max depth reached: {}", result.max_depth);
