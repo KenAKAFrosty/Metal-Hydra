@@ -704,7 +704,7 @@ pub struct SearchResult {
 }
 
 // =============================================================================
-// Main Search Function (YOUR API)
+// Main Search Function
 // =============================================================================
 
 /// Perform multiverse search on a Battlesnake game state.

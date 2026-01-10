@@ -15,13 +15,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/move", post(handle_move));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    println!("Listening on http://0.0.0.0:3000");
+    println!("Pure search battle server listening on http://0.0.0.0:3000");
     axum::serve(listener, app).await?;
     Ok(())
 }
 
 async fn handle_move(Json(req): Json<GameMoveRequest>) -> Json<MoveResponse> {
     let result = search(&req, Duration::from_millis(450));
+    println!("TURN {} -------", req.turn);
     println!("Best move: {}\n", result.best_move);
 
     println!("Move scores (survivals, wins):");
@@ -39,17 +40,18 @@ async fn handle_move(Json(req): Json<GameMoveRequest>) -> Json<MoveResponse> {
     println!("  Max depth reached: {}", result.max_depth);
     println!("  Time elapsed: {}ms", result.elapsed_ms);
     println!("  Throughput: {:.2}M nodes/sec", result.throughput_mnps);
+    println!("------- END {}", req.turn);
 
     Json(MoveResponse {
         r#move: result.best_move.as_str().to_string(),
-        shout: "🌲".to_string(),
+        shout: "⛓️🌹🌹⛓️".to_string(),
     })
 }
 
 async fn handle_info() -> Json<InfoResponse> {
     Json(InfoResponse {
         apiversion: "1".into(),
-        color: "#1E2650".to_string(),
+        color: "#6B3A3A".to_string(),
         head: "rose".to_string(),
         tail: "flytrap".to_string(),
     })
