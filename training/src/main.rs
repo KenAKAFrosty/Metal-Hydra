@@ -204,7 +204,7 @@ async fn main() {
     let device = CudaDevice::default();
 
     let batch_size = 1024;
-    let learning_rate = 9e-4;
+    let learning_rate = 1e-3;
     let num_epochs = 100;
 
     let config = BattleModelConfig {
@@ -216,7 +216,7 @@ async fn main() {
         tile_features: 27,
         meta_features: 2,
         grid_size: 11,
-        dropout: 0.1,
+        dropout: 0.35,
         head_hidden_size: 128,
         num_queries: 8,
     };
@@ -253,7 +253,7 @@ async fn main() {
         .num_workers(2)
         .build(dataset_valid);
 
-    let artifact_dir = "/tmp/battlesnake-transformer-value-standard";
+    let artifact_dir = "/tmp/battlesnake-transformer-value-standard-2";
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(LossMetric::new())
@@ -272,7 +272,7 @@ async fn main() {
 
     model_trained
         .model
-        .save_file("transformer_value-standard", &recorder)
+        .save_file("transformer_value-standard-2", &recorder)
         .expect("Failed to save model");
 
     println!("Training complete.");
