@@ -203,22 +203,22 @@ type MyAutodiffBackend = Autodiff<MyBackend>;
 async fn main() {
     let device = CudaDevice::default();
 
-    let batch_size = 512;
-    let learning_rate = 3e-4;
+    let batch_size = 1024;
+    let learning_rate = 9e-4;
     let num_epochs = 100;
 
     let config = BattleModelConfig {
-        d_model: 128,
-        d_ff: 512,
-        n_heads: 4,
+        d_model: 64,
+        d_ff: 256,
+        n_heads: 2,
         n_layers: 4,
         num_classes: 4,
         tile_features: 27,
         meta_features: 2,
         grid_size: 11,
-        dropout: 0.15,
-        head_hidden_size: 256,
-        num_queries: 32,
+        dropout: 0.1,
+        head_hidden_size: 128,
+        num_queries: 8,
     };
 
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
@@ -231,7 +231,8 @@ async fn main() {
         // .with_cautious_weight_decay(true)
         .init();
 
-    let (dataset_train, dataset_valid) = MmapDataset::new("../preprocess/train_data_value.bin");
+    let (dataset_train, dataset_valid) =
+        MmapDataset::new("../preprocess/train_data_value_standard.bin");
 
     let batcher = BinaryBatcher::<MyAutodiffBackend> {
         device: device.clone(),
@@ -252,7 +253,7 @@ async fn main() {
         .num_workers(2)
         .build(dataset_valid);
 
-    let artifact_dir = "/tmp/battlesnake-transformer-value";
+    let artifact_dir = "/tmp/battlesnake-transformer-value-standard";
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(LossMetric::new())
@@ -271,7 +272,7 @@ async fn main() {
 
     model_trained
         .model
-        .save_file("transformer_value", &recorder)
+        .save_file("transformer_value-standard", &recorder)
         .expect("Failed to save model");
 
     println!("Training complete.");

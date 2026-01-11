@@ -75,7 +75,7 @@ const FLOATS_PER_RECORD: usize = (SEQ_LEN * TILE_FEATS) + META_FEATS + 4;
 fn main() {
     // const TARGET_RECORD_COUNT: u64 = 1_500_000;
     let db_path = "../battlesnake_data.db";
-    let out_path = "train_data_value.bin";
+    let out_path = "train_data_value_standard.bin";
 
     println!("Loading data from {}...", db_path);
     let conn = Connection::open(db_path).expect("Could not open DB");
@@ -99,6 +99,7 @@ fn main() {
     writer.write_all(&0u64.to_le_bytes()).unwrap(); // Header placeholder
 
     let mut count: u64 = 0;
+    let mut skipped_games: u64 = 0;
 
     // --- STATE FOR BATCHING ---
     let mut current_game_id = String::new();
@@ -120,7 +121,11 @@ fn main() {
         if row_id != current_game_id {
             // New game detected! Process the previous buffer.
             if !game_buffer.is_empty() {
-                process_game_buffer(&game_buffer, &mut writer, &mut write_buffer, &mut count);
+                let was_processed =
+                    process_game_buffer(&game_buffer, &mut writer, &mut write_buffer, &mut count);
+                if !was_processed {
+                    skipped_games += 1;
+                }
             }
 
             // if count >= TARGET_RECORD_COUNT {
@@ -139,7 +144,11 @@ fn main() {
 
     // Process the final game left in buffer
     if !game_buffer.is_empty() {
-        process_game_buffer(&game_buffer, &mut writer, &mut write_buffer, &mut count);
+        let was_processed =
+            process_game_buffer(&game_buffer, &mut writer, &mut write_buffer, &mut count);
+        if !was_processed {
+            skipped_games += 1;
+        }
     }
 
     // Update Header
@@ -154,6 +163,7 @@ fn main() {
         out_path,
         (count as usize * FLOATS_PER_RECORD * 4) as f32 / 1e9
     );
+    println!("Skipped {} non-standard games.", skipped_games);
 }
 
 const LOSER_START_VAL_MIN: f32 = 0.15;
@@ -175,9 +185,14 @@ fn process_game_buffer(
     writer: &mut BufWriter<File>,
     buffer: &mut [f32],
     count: &mut u64,
-) {
+) -> bool {
     if turns.len() < 2 {
-        return;
+        return false;
+    }
+    // Skip non-standard games (only process 4player free for all matches)
+    let initial_snake_count = turns[0].snakes.iter().filter(|s| s.death.is_none()).count();
+    if initial_snake_count != 4 {
+        return false;
     }
 
     let winner_id = &turns[0].winning_snake_id;
@@ -402,6 +417,7 @@ fn process_game_buffer(
             }
         }
     }
+    true
 }
 
 fn write_record_to_buffer(
