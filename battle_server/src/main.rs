@@ -670,7 +670,7 @@ async fn main() -> anyhow::Result<()> {
         "new_cnn" => { 
             let config = BattleCnnConfig::new();
             let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("your_model_file".into(), &device)
+                .load("model-1".into(), &device)
                 .expect("Failed to load new CNN weights");
             let model = BattleCnn::new(&config, &device).load_record(record);
             (Model::NewHydraCnn(model), ModelKind::NewHydraCnn)

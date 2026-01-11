@@ -237,6 +237,7 @@ async fn main() {
 
     let dataloader_valid = DataLoaderBuilder::new(batcher_valid)
         .batch_size(batch_size)
+        .shuffle(123)
         .num_workers(2)
         .build(dataset_valid);
 
