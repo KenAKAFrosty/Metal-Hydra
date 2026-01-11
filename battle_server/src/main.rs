@@ -657,7 +657,7 @@ async fn main() -> anyhow::Result<()> {
              
              // Load the record explicitly
              let record: burn_ai_model::transformer_winprob::BattleModelRecord<NdArray> = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("model-10".into(), &device)
+                .load("ox-model-10".into(), &device)
                 .expect("Failed to load transformer weights");
             //not sure what epoch that landed on but it was more than the 21 in there. I *think* still in the 20s though, like maybe 26.
             //also no guarantee it was actually improved, though loss seemed to be steadily dropping just fine, so probably ok.
@@ -670,7 +670,7 @@ async fn main() -> anyhow::Result<()> {
         "new_cnn" => { 
             let config = BattleCnnConfig::new();
             let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
-                .load("model-6".into(), &device)
+                .load("model-10".into(), &device)
                 .expect("Failed to load new CNN weights");
             let model = BattleCnn::new(&config, &device).load_record(record);
             (Model::NewHydraCnn(model), ModelKind::NewHydraCnn)
