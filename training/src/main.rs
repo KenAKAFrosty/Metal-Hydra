@@ -197,7 +197,7 @@ async fn main() {
     let device = CudaDevice::default();
 
     // Hyperparameters
-    let batch_size = 2048; // Can go larger with CNN (less memory than transformer)
+    let batch_size = 1024;
     let learning_rate = 1e-3;
     let num_epochs = 100;
 
