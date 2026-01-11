@@ -5,4 +5,5 @@ edition = "2021"
 
 
 [dependencies]
-burn.workspace = true
+burn = { workspace = true, features = ["ndarray"] }
+burn-ndarray = "0.19"

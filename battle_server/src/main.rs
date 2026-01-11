@@ -10,7 +10,7 @@ use burn::{module::Module, record::{FullPrecisionSettings, NamedMpkFileRecorder}
 use burn::{record::CompactRecorder, record::Recorder, tensor::{Tensor, TensorData}};
 use burn_ndarray::NdArray;
 
-use burn_ai_model::simple_cnn_opset16::Model as ModelOriginal;
+use burn_ai_model::{new_cnn::{BattleCnn, BattleCnnConfig}, simple_cnn_opset16::Model as ModelOriginal};
 use burn_ai_model::transformer::{BattleModel, BattleModelConfig}; 
 use burn_ai_model::transformer_winprob::{BattleModel as WinProbBattleModel, BattleModelConfig as WinProbBattleModelConfig}; 
 
@@ -25,7 +25,8 @@ type B = NdArray<f32>;
 enum ModelKind {
     OriginalCnn,
     HydraTransformer,
-    OxTransformer
+    OxTransformer,
+    NewHydraCnn,
 }
 impl ModelKind {
     pub fn color(&self) -> &'static str {
@@ -33,7 +34,7 @@ impl ModelKind {
             ModelKind::OriginalCnn => "#D34516",
             ModelKind::HydraTransformer => "#D34516",
             ModelKind::OxTransformer => "#1E2650",
-            
+            ModelKind::NewHydraCnn => "#D34516"
         }
     }
     pub fn head(&self) -> &'static str { 
@@ -41,13 +42,15 @@ impl ModelKind {
             ModelKind::OriginalCnn => "egg",
             ModelKind::HydraTransformer => "cute-dragon",
             ModelKind::OxTransformer => "bull",
+            ModelKind::NewHydraCnn => "cute-dragon"
         }
     }
     pub fn tail(&self) -> &'static str { 
         match self { 
             ModelKind::OriginalCnn => "egg",
             ModelKind::HydraTransformer => "duck",
-            ModelKind::OxTransformer => "rocket"
+            ModelKind::OxTransformer => "rocket",
+            ModelKind::NewHydraCnn => "flytrap"
         }
     }
 }
@@ -63,7 +66,8 @@ struct AppState {
 enum Model { 
     Original(ModelOriginal<B>),
     Transformer(BattleModel<B>),
-    TransformerWinProb(WinProbBattleModel<B>)
+    TransformerWinProb(WinProbBattleModel<B>),
+    NewHydraCnn(BattleCnn<B>)
 }
 
 #[derive(Deserialize)]
@@ -328,6 +332,134 @@ fn preprocess_transformer(req: &GameMoveRequest) -> (Array3<f32>, Array2<f32>) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Preprocessing for BattleCnn (New Model)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Channel encoding (8 channels):
+// 0: My head        - value: 1.0
+// 1: Enemy heads    - value: their_len / (their_len + my_len) [relative size]
+// 2: My body        - value: gradient from head (1.0) toward tail (→0)
+// 3: Enemy bodies   - value: gradient per-snake
+// 4: My tail        - value: 1.0
+// 5: Enemy tails    - value: 1.0
+// 6: Food           - value: 1.0
+// 7: Enemy health   - value: health/100 on ALL enemy tiles (head, body, tail)
+//
+// Metadata (3 values):
+// 0: food_spawn_chance / 100.0
+// 1: min_food / board_area
+// 2: my_health / 100.0
+
+const CNN_CHANNELS: usize = 8;
+const CNN_HEIGHT: usize = 11;
+const CNN_WIDTH: usize = 11;
+const CNN_META_COUNT: usize = 3;
+
+// Channel indices
+const CH_MY_HEAD: usize = 0;
+const CH_ENEMY_HEADS: usize = 1;
+const CH_MY_BODY: usize = 2;
+const CH_ENEMY_BODIES: usize = 3;
+const CH_MY_TAIL: usize = 4;
+const CH_ENEMY_TAILS: usize = 5;
+const CH_FOOD: usize = 6;
+const CH_ENEMY_HEALTH: usize = 7;
+
+fn preprocess_cnn(req: &GameMoveRequest) -> (Array4<f32>, Array2<f32>) {
+    let (w, h) = (req.board.width, req.board.height);
+    let area = (w * h) as f32;
+    let my_id = &req.you.id;
+    let my_len = req.you.body.len();
+
+    let mut board = Array4::<f32>::zeros((1, CNN_CHANNELS, CNN_HEIGHT, CNN_WIDTH));
+
+    for snake in &req.board.snakes {
+        let len = snake.body.len();
+        let is_me = snake.id == *my_id;
+        let health_norm = snake.health as f32 / 100.0;
+
+        // === HEAD ===
+        let head = &snake.body[0];
+        if head.y < CNN_HEIGHT && head.x < CNN_WIDTH {
+            if is_me {
+                // My head: simple marker
+                board[[0, CH_MY_HEAD, head.y, head.x]] = 1.0;
+            } else {
+                // Enemy head: relative size encoding
+                // > 0.5 means they're bigger (dangerous for collisions)
+                // < 0.5 means I'm bigger (safe to challenge)
+                // = 0.5 means equal size
+                let relative_size = len as f32 / (len + my_len) as f32;
+                board[[0, CH_ENEMY_HEADS, head.y, head.x]] = relative_size;
+
+                // Also mark enemy health on head tile
+                board[[0, CH_ENEMY_HEALTH, head.y, head.x]] = health_norm;
+            }
+        }
+
+        // === BODY (excluding head and tail) ===
+        // Gradient encoding: how soon will this tile be empty?
+        // Value near 1.0 = just behind head, won't clear for a while
+        // Value near 0.0 = close to tail, will clear soon
+        if len > 2 {
+            for (i, part) in snake.body.iter().enumerate().skip(1).take(len - 2) {
+                if part.y >= CNN_HEIGHT || part.x >= CNN_WIDTH {
+                    continue;
+                }
+
+                // i=1 is first body segment after head
+                // gradient = (len - i) / len
+                //   i=1: (len-1)/len ≈ 1.0
+                //   i=len-2: 2/len (small)
+                let gradient = (len - i) as f32 / len as f32;
+
+                if is_me {
+                    board[[0, CH_MY_BODY, part.y, part.x]] = gradient;
+                } else {
+                    board[[0, CH_ENEMY_BODIES, part.y, part.x]] = gradient;
+                    board[[0, CH_ENEMY_HEALTH, part.y, part.x]] = health_norm;
+                }
+            }
+        }
+
+        // === TAIL ===
+        // Only mark if snake length > 1 (otherwise head == tail)
+        if len > 1 {
+            if let Some(tail) = snake.body.last() {
+                if tail.y < CNN_HEIGHT && tail.x < CNN_WIDTH {
+                    if is_me {
+                        board[[0, CH_MY_TAIL, tail.y, tail.x]] = 1.0;
+                    } else {
+                        board[[0, CH_ENEMY_TAILS, tail.y, tail.x]] = 1.0;
+                        board[[0, CH_ENEMY_HEALTH, tail.y, tail.x]] = health_norm;
+                    }
+                }
+            }
+        }
+    }
+
+    // === FOOD ===
+    for f in &req.board.food {
+        if f.x < w && f.y < h && f.y < CNN_HEIGHT && f.x < CNN_WIDTH {
+            board[[0, CH_FOOD, f.y, f.x]] = 1.0;
+        }
+    }
+
+    // === METADATA ===
+    let food_spawn = req.game.ruleset.settings.food_spawn_chance as f32 / 100.0;
+    let min_food = req.game.ruleset.settings.minimum_food as f32 / area;
+    let my_health = req.you.health as f32 / 100.0;
+
+    let metadata = Array2::from_shape_vec(
+        (1, CNN_META_COUNT),
+        vec![food_spawn, min_food, my_health],
+    )
+    .unwrap();
+
+    (board, metadata)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Handlers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -376,6 +508,10 @@ async fn handle_move(
         let input_data = match model_kind {
             ModelKind::OriginalCnn => {
                 let (b, m) = preprocess(&req); 
+                PreprocessedData::Cnn { board: b, meta: m }
+            },
+            ModelKind::NewHydraCnn => {
+                let (b, m) = preprocess_cnn(&req);  // <-- Our new function
                 PreprocessedData::Cnn { board: b, meta: m }
             },
             ModelKind::HydraTransformer => {
@@ -434,7 +570,10 @@ async fn handle_move(
                 let (b, m_tens) = to_tensors(board, meta, &device);
                 m.forward(b, m_tens)
             },
-
+            (Model::NewHydraCnn(m), PreprocessedData::Cnn { board, meta }) => {
+                let (b, m_tens) = to_tensors(board, meta, &device);
+                m.forward(b, m_tens)
+            }
             _ => panic!("Model / Data Mismatch!"),
         };
 
@@ -443,7 +582,8 @@ async fn handle_move(
         let moves = match model_kind { 
             ModelKind::OriginalCnn =>  ["up", "right", "down", "left"],
             ModelKind::HydraTransformer =>  ["up", "right", "down", "left"],
-            ModelKind::OxTransformer => ["up","down","right","left"]
+            ModelKind::NewHydraCnn => ["up", "right", "down", "left"],
+            ModelKind::OxTransformer => ["up","down","right","left"],
         };
         (moves[best_idx].to_string(), "🔥".to_string())
     })
@@ -527,6 +667,14 @@ async fn main() -> anyhow::Result<()> {
              
              (Model::TransformerWinProb(model), ModelKind::OxTransformer)
         }
+        "new_cnn" => { 
+            let config = BattleCnnConfig::new();
+            let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
+                .load("your_model_file".into(), &device)
+                .expect("Failed to load new CNN weights");
+            let model = BattleCnn::new(&config, &device).load_record(record);
+            (Model::NewHydraCnn(model), ModelKind::NewHydraCnn)
+        },
         _ => {
             println!("Unrecognized model choice, falling back to simple_cnn_opset16");
             let m = ModelOriginal::from_file("simple_cnn_opset16", &device);

@@ -877,6 +877,7 @@ name = "burn_ai_model"
 version = "0.1.0"
 dependencies = [
  "burn",
+ "burn-ndarray",
 ]
 
 [[package]]
