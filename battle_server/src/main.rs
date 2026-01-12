@@ -675,6 +675,14 @@ async fn main() -> anyhow::Result<()> {
             let model = BattleCnn::new(&config, &device).load_record(record);
             (Model::NewHydraCnn(model), ModelKind::NewHydraCnn)
         },
+        "new_cnn_experimental" => { 
+            let config = BattleCnnConfig::new();
+            let record = NamedMpkFileRecorder::<FullPrecisionSettings>::new()
+                .load("model-14".into(), &device)
+                .expect("Failed to load new CNN weights");
+            let model = BattleCnn::new(&config, &device).load_record(record);
+            (Model::NewHydraCnn(model), ModelKind::NewHydraCnn)
+        },
         _ => {
             println!("Unrecognized model choice, falling back to simple_cnn_opset16");
             let m = ModelOriginal::from_file("simple_cnn_opset16", &device);

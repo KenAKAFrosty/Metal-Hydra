@@ -200,7 +200,7 @@ async fn main() {
     // Hyperparameters
     let batch_size = 1024;
     let learning_rate = 1e-3;
-    let num_epochs = 75;
+    let num_epochs = 100;
     let lr_scheduler_config = CosineAnnealingLrSchedulerConfig::new(learning_rate, num_epochs);
     let lr_scheduler = lr_scheduler_config
         .init()
@@ -223,14 +223,11 @@ async fn main() {
     println!("Num params in model: {}", model.num_params());
 
     // Optimizer - AdamW with modest weight decay
-    let optimizer = AdamWConfig::new()
-        .with_weight_decay(1e-4)
-        // .with_cautious_weight_decay(true)
-        .init();
+    let optimizer = AdamWConfig::new().with_weight_decay(1e-4).init();
 
     // Load dataset
     let (dataset_train, dataset_valid) =
-        MmapDataset::new("../preprocess/train_data_cnn_augmented.bin");
+        MmapDataset::new("../preprocess/train_data_cnn_standard.bin");
 
     let batcher_train = CnnBatcher::<MyAutodiffBackend> {
         device: device.clone(),
@@ -251,7 +248,7 @@ async fn main() {
         .num_workers(2)
         .build(dataset_valid);
 
-    let artifact_dir = "/tmp/battlesnake-cnn-augmented";
+    let artifact_dir = "/tmp/battlesnake-cnn-standard";
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(AccuracyMetric::new())
@@ -266,13 +263,13 @@ async fn main() {
         ))
         .with_file_checkpointer(recorder.clone())
         .num_epochs(num_epochs)
-        .build(model, optimizer, learning_rate);
+        .build(model, optimizer, lr_scheduler);
 
     let model_trained = learner.fit(dataloader_train, dataloader_valid);
 
     model_trained
         .model
-        .save_file("battle_cnn_trained_augmented", &recorder)
+        .save_file("battle_cnn_trained_standard", &recorder)
         .expect("Failed to save model");
 
     println!("Training complete.");
