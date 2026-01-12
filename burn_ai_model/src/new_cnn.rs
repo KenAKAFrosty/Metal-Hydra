@@ -1,7 +1,7 @@
 use burn::nn::{
     conv::{Conv2d, Conv2dConfig},
     pool::{MaxPool2d, MaxPool2dConfig},
-    BatchNorm, BatchNormConfig, Linear, LinearConfig, PaddingConfig2d,
+    BatchNorm, BatchNormConfig, Dropout, DropoutConfig, Linear, LinearConfig, PaddingConfig2d,
 };
 use burn::prelude::*;
 use burn::tensor::activation::relu;
@@ -12,8 +12,9 @@ use burn::tensor::activation::relu;
 /// - 5 conv layers (3x3) for full receptive field coverage
 /// - BatchNorm after each conv
 /// - ReLU activations
+/// - Optional spatial dropout after conv blocks
 /// - MaxPool at the end to compress spatial dimensions  
-/// - MLP head with metadata concatenation
+/// - MLP head with metadata concatenation and optional dropout
 #[derive(Config, Debug)]
 pub struct BattleCnnConfig {
     /// Number of input channels (board encoding)
@@ -24,13 +25,17 @@ pub struct BattleCnnConfig {
     #[config(default = 3)]
     pub meta_features: usize,
 
-    /// Number of output classes (directions: up, down, left, right)
+    /// Number of output classes (directions: up, right, down, left)
     #[config(default = 4)]
     pub num_classes: usize,
 
     /// Grid size (assumes square board)
     #[config(default = 11)]
     pub grid_size: usize,
+
+    /// Dropout rate for MLP head. 0.0 = disabled.
+    #[config(default = 0.0)]
+    pub mlp_dropout: f64,
 }
 
 #[derive(Module, Debug)]
@@ -58,6 +63,9 @@ pub struct BattleCnn<B: Backend> {
     fc1: Linear<B>,
     fc2: Linear<B>,
     fc3: Linear<B>,
+
+    // MLP dropout
+    mlp_dropout: Dropout,
 }
 
 impl<B: Backend> BattleCnn<B> {
@@ -111,6 +119,9 @@ impl<B: Backend> BattleCnn<B> {
             .with_bias(true)
             .init(device);
 
+        // MLP dropout
+        let mlp_dropout = DropoutConfig::new(config.mlp_dropout).init();
+
         Self {
             conv1,
             bn1,
@@ -126,6 +137,7 @@ impl<B: Backend> BattleCnn<B> {
             fc1,
             fc2,
             fc3,
+            mlp_dropout,
         }
     }
 
@@ -173,12 +185,14 @@ impl<B: Backend> BattleCnn<B> {
         // Concatenate metadata: [B, 1600] + [B, 3] -> [B, 1603]
         let x = Tensor::cat(vec![x, metadata], 1);
 
-        // MLP Head
+        // MLP Head with dropout between layers
         let x = self.fc1.forward(x);
         let x = relu(x);
+        let x = self.mlp_dropout.forward(x);
 
         let x = self.fc2.forward(x);
         let x = relu(x);
+        let x = self.mlp_dropout.forward(x);
 
         // Output logits (no activation - CrossEntropy expects raw logits)
         self.fc3.forward(x)
@@ -209,16 +223,22 @@ mod tests {
     }
 
     #[test]
-    fn test_single_sample() {
+    fn test_with_dropout() {
         let device = Default::default();
-        let config = BattleCnnConfig::new();
+        let config = BattleCnnConfig {
+            in_channels: 8,
+            meta_features: 3,
+            num_classes: 4,
+            grid_size: 11,
+            mlp_dropout: 0.15,
+        };
         let model: BattleCnn<TestBackend> = BattleCnn::new(&config, &device);
 
-        let board = Tensor::zeros([1, 8, 11, 11], &device);
-        let metadata = Tensor::zeros([1, 3], &device);
+        let board = Tensor::zeros([2, 8, 11, 11], &device);
+        let metadata = Tensor::zeros([2, 3], &device);
 
         let output = model.forward(board, metadata);
 
-        assert_eq!(output.dims(), [1, 4]);
+        assert_eq!(output.dims(), [2, 4]);
     }
 }

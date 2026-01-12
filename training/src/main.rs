@@ -4,6 +4,7 @@ use burn::backend::{cuda::Cuda, cuda::CudaDevice, Autodiff};
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::data::dataset::Dataset;
+use burn::lr_scheduler::cosine::{CosineAnnealingLrScheduler, CosineAnnealingLrSchedulerConfig};
 use burn::optim::AdamWConfig;
 use burn::prelude::*;
 use burn::record::{FullPrecisionSettings, NamedMpkFileRecorder, Recorder};
@@ -154,6 +155,7 @@ impl<B: AutodiffBackend> TrainStep<BattlesnakeBatch<B>, ClassificationOutput<B>>
         let logits = self.forward(batch.board, batch.metadata);
 
         let loss = burn::nn::loss::CrossEntropyLossConfig::new()
+            .with_smoothing(Some(0.1))
             .init(&logits.device())
             .forward(logits.clone(), batch.targets.clone());
 
@@ -199,7 +201,11 @@ async fn main() {
     // Hyperparameters
     let batch_size = 1024;
     let learning_rate = 1e-3;
-    let num_epochs = 100;
+    let num_epochs = 75;
+    let lr_scheduler_config = CosineAnnealingLrSchedulerConfig::new(learning_rate, num_epochs);
+    let lr_scheduler = lr_scheduler_config
+        .init()
+        .expect("Should make LR scheduler from config");
 
     // Model config (uses defaults, but being explicit)
     let config = BattleCnnConfig {
@@ -207,6 +213,7 @@ async fn main() {
         meta_features: 3,
         num_classes: 4,
         grid_size: 11,
+        mlp_dropout: 0.1,
     };
 
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
@@ -217,10 +224,14 @@ async fn main() {
     println!("Num params in model: {}", model.num_params());
 
     // Optimizer - AdamW with modest weight decay
-    let optimizer = AdamWConfig::new().with_weight_decay(1e-4).init();
+    let optimizer = AdamWConfig::new()
+        .with_weight_decay(1e-3)
+        .with_cautious_weight_decay(true)
+        .init();
 
     // Load dataset
-    let (dataset_train, dataset_valid) = MmapDataset::new("../preprocess/train_data_cnn.bin");
+    let (dataset_train, dataset_valid) =
+        MmapDataset::new("../preprocess/train_data_cnn_augmented.bin");
 
     let batcher_train = CnnBatcher::<MyAutodiffBackend> {
         device: device.clone(),
@@ -241,7 +252,7 @@ async fn main() {
         .num_workers(2)
         .build(dataset_valid);
 
-    let artifact_dir = "/tmp/battlesnake-cnn";
+    let artifact_dir = "/tmp/battlesnake-cnn-augmented";
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(AccuracyMetric::new())
@@ -256,13 +267,13 @@ async fn main() {
         ))
         .with_file_checkpointer(recorder.clone())
         .num_epochs(num_epochs)
-        .build(model, optimizer, learning_rate);
+        .build(model, optimizer, lr_scheduler);
 
     let model_trained = learner.fit(dataloader_train, dataloader_valid);
 
     model_trained
         .model
-        .save_file("battle_cnn_trained", &recorder)
+        .save_file("battle_cnn_trained_augmented", &recorder)
         .expect("Failed to save model");
 
     println!("Training complete.");
