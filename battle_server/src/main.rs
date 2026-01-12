@@ -34,7 +34,7 @@ impl ModelKind {
             ModelKind::OriginalCnn => "#D34516",
             ModelKind::HydraTransformer => "#D34516",
             ModelKind::OxTransformer => "#1E2650",
-            ModelKind::NewHydraCnn => "#D34516"
+            ModelKind::NewHydraCnn => "#6B3A3A"
         }
     }
     pub fn head(&self) -> &'static str { 
