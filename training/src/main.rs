@@ -155,7 +155,6 @@ impl<B: AutodiffBackend> TrainStep<BattlesnakeBatch<B>, ClassificationOutput<B>>
         let logits = self.forward(batch.board, batch.metadata);
 
         let loss = burn::nn::loss::CrossEntropyLossConfig::new()
-            .with_smoothing(Some(0.1))
             .init(&logits.device())
             .forward(logits.clone(), batch.targets.clone());
 
@@ -213,7 +212,7 @@ async fn main() {
         meta_features: 3,
         num_classes: 4,
         grid_size: 11,
-        mlp_dropout: 0.1,
+        mlp_dropout: 0.0,
     };
 
     let recorder = NamedMpkFileRecorder::<FullPrecisionSettings>::new();
@@ -225,8 +224,8 @@ async fn main() {
 
     // Optimizer - AdamW with modest weight decay
     let optimizer = AdamWConfig::new()
-        .with_weight_decay(1e-3)
-        .with_cautious_weight_decay(true)
+        .with_weight_decay(1e-4)
+        // .with_cautious_weight_decay(true)
         .init();
 
     // Load dataset
@@ -267,7 +266,7 @@ async fn main() {
         ))
         .with_file_checkpointer(recorder.clone())
         .num_epochs(num_epochs)
-        .build(model, optimizer, lr_scheduler);
+        .build(model, optimizer, learning_rate);
 
     let model_trained = learner.fit(dataloader_train, dataloader_valid);
 
