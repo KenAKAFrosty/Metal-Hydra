@@ -201,7 +201,7 @@ async fn main() {
     // Hyperparameters
     let batch_size = 1024;
     let learning_rate = 1e-3;
-    let num_epochs = 100;
+    let num_epochs = 20;
     let lr_scheduler_config = CosineAnnealingLrSchedulerConfig::new(learning_rate, num_epochs);
     let lr_scheduler = lr_scheduler_config
         .init()
