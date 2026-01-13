@@ -155,6 +155,7 @@ impl<B: AutodiffBackend> TrainStep<BattlesnakeBatch<B>, ClassificationOutput<B>>
         let logits = self.forward(batch.board, batch.metadata);
 
         let loss = burn::nn::loss::CrossEntropyLossConfig::new()
+            // .with_smoothing(Some(0.1))
             .init(&logits.device())
             .forward(logits.clone(), batch.targets.clone());
 
@@ -223,11 +224,14 @@ async fn main() {
     println!("Num params in model: {}", model.num_params());
 
     // Optimizer - AdamW with modest weight decay
-    let optimizer = AdamWConfig::new().with_weight_decay(1e-4).init();
+    let optimizer = AdamWConfig::new()
+        .with_weight_decay(1e-4)
+        .with_cautious_weight_decay(true)
+        .init();
 
     // Load dataset
     let (dataset_train, dataset_valid) =
-        MmapDataset::new("../preprocess/train_data_cnn_standard.bin");
+        MmapDataset::new("../preprocess/train_data_cnn_augmented.bin");
 
     let batcher_train = CnnBatcher::<MyAutodiffBackend> {
         device: device.clone(),
@@ -248,7 +252,7 @@ async fn main() {
         .num_workers(2)
         .build(dataset_valid);
 
-    let artifact_dir = "/tmp/battlesnake-cnn-standard";
+    let artifact_dir = "/tmp/battlesnake-cnn-augmented";
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(AccuracyMetric::new())
@@ -269,7 +273,7 @@ async fn main() {
 
     model_trained
         .model
-        .save_file("battle_cnn_trained_standard", &recorder)
+        .save_file("battle_cnn_augmented", &recorder)
         .expect("Failed to save model");
 
     println!("Training complete.");
